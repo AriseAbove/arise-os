@@ -20,6 +20,7 @@ function seedJourney(db: FounderDb, overrides: Partial<FunnelContact> = {}, touc
     status: overrides.status ?? 'estimate_sent',
     product: 'Kitchen remodel',
     amountUsd: 25000,
+    costUsd: null,
     relationship: 'warm',
     likelihood: overrides.likelihood ?? 80,
     url: null,
