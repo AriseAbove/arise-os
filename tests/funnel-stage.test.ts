@@ -23,6 +23,7 @@ function seedContact(over: Partial<FunnelContact> = {}): FunnelContact {
     status: 'inquiry',
     product: null,
     amountUsd: null,
+    costUsd: null,
     relationship: 'warm',
     likelihood: 50,
     url: null,

@@ -81,6 +81,7 @@ export function importAlloCalls(db: FounderDb, calls: AlloCall[], now: Date): Al
         status: 'inquiry',
         product: null,
         amountUsd: null,
+        costUsd: null,
         relationship: 'warm',
         likelihood: 50,
         url: null,

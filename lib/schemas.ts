@@ -575,9 +575,10 @@ export const FunnelStageSchema = z.enum([
 export const FunnelBusinessSchema = z.enum(['aac', 'apps']);
 export const FunnelChannelSchema = z.enum(['call', 'sms', 'email', 'dm', 'walkthrough', 'document', 'crm', 'organic', 'ads']);
 // Where each touch comes from: Allo (the AI receptionist call log), a CRM,
-// the website, a referral, or manual entry. Rows carry the intended source so
-// a live swap is a repo-level change.
-export const FunnelSourceSchema = z.enum(['allo', 'crm', 'website', 'referral', 'manual']);
+// the website, a referral, manual entry, or a Claude/Cowork session logging
+// its own work (an estimate/proposal it just wrote — see lib/funnel-card.ts).
+// Rows carry the intended source so a live swap is a repo-level change.
+export const FunnelSourceSchema = z.enum(['allo', 'crm', 'website', 'referral', 'manual', 'claude']);
 
 // Relationship temperature — with likelihood-to-buy (0–100) it drives how a
 // client node renders in the funnel space.
@@ -590,6 +591,10 @@ export const FunnelContactSchema = z.object({
   status: FunnelStageSchema, // furthest stage reached
   product: z.string().nullable(), // what they opted in to buy, once converted
   amountUsd: z.number().nonnegative().nullable(),
+  // Actual/estimated job cost (materials + labor + subs) — lets margin =
+  // amountUsd - costUsd get computed once both are known. Null until Sean
+  // (via Claude, today's only writer) records a real cost; never a guess.
+  costUsd: z.number().nonnegative().nullable().default(null),
   relationship: FunnelRelationshipSchema,
   likelihood: z.number().int().min(0).max(100),
   /** Deep link to the source record (CRM contact page). */

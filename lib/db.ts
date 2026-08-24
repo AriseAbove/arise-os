@@ -269,6 +269,7 @@ CREATE TABLE IF NOT EXISTS funnel_contacts (
   status TEXT NOT NULL,
   product TEXT,
   amount_usd REAL,
+  cost_usd REAL,
   relationship TEXT NOT NULL DEFAULT 'warm',
   likelihood INTEGER NOT NULL DEFAULT 50,
   email TEXT,
@@ -399,6 +400,10 @@ function migrateFunnelContactsTable(db: InstanceType<typeof Database>): void {
   for (const col of ['person', 'company', 'role', 'linkedin']) {
     if (!columns.has(col)) safeAlter(db, `ALTER TABLE funnel_contacts ADD COLUMN ${col} TEXT`);
   }
+  // 2026-08-24: cost/margin tracking (lib/funnel-card.ts) — lets a journey
+  // carry actual/estimated job cost alongside the deal amount so profit per
+  // job is computable, not just revenue.
+  if (!columns.has('cost_usd')) safeAlter(db, 'ALTER TABLE funnel_contacts ADD COLUMN cost_usd REAL');
 }
 
 /** Databases created before lib/funnel-score.ts lack the column that lets a
@@ -1245,8 +1250,8 @@ export function openDb(path: string) {
     insertContact(c: FunnelContact): void {
       FunnelContactSchema.parse(c);
       db.prepare(
-        'INSERT OR REPLACE INTO funnel_contacts (id, name, business, status, product, amount_usd, relationship, likelihood, email, phone, person, company, role, linkedin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      ).run(c.id, c.name, c.business, c.status, c.product, c.amountUsd, c.relationship, c.likelihood, c.email, c.phone, c.person, c.company, c.role, c.linkedin, c.createdAt);
+        'INSERT OR REPLACE INTO funnel_contacts (id, name, business, status, product, amount_usd, cost_usd, relationship, likelihood, email, phone, person, company, role, linkedin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(c.id, c.name, c.business, c.status, c.product, c.amountUsd, c.costUsd, c.relationship, c.likelihood, c.email, c.phone, c.person, c.company, c.role, c.linkedin, c.createdAt);
     },
     insertTouch(t: FunnelTouch): void {
       FunnelTouchSchema.parse(t);
@@ -1284,6 +1289,7 @@ export function openDb(path: string) {
           status: r.status,
           product: r.product,
           amountUsd: r.amount_usd,
+          costUsd: r.cost_usd,
           relationship: r.relationship,
           likelihood: r.likelihood,
           email: r.email,

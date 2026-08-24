@@ -23,6 +23,7 @@ const journey = (over: Partial<FunnelContact> = {}, touches: FunnelTouch[] = [to
   status: 'follow_up',
   product: null,
   amountUsd: null,
+  costUsd: null,
   relationship: 'warm',
   likelihood: 50,
   url: null,

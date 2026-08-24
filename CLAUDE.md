@@ -57,6 +57,40 @@ across both pipelines. Do not hardcode the AAC stage count elsewhere on the
 assumption it is the only pipeline. Colors are `--funnel-s0..s7` per theme in
 `app/globals.css` (Apps' 6 stages reuse the first 6 tokens).
 
+**Third funnel writer: Claude/Cowork sessions, closing the email-leads gap
+(2026-08-24).** A handoff doc (`ARISE_OS_HANDOFF_REQUEST_20260824_
+EmailLeadsGap.md`) documented that a job originating or moving entirely by
+email/referral — never an Allo call, never a website form submission — was
+structurally invisible to `/funnel`. Confirmed with two real cases: the
+2468 Ford St 203(k) rehab (Titana Hampton — a $3,650 lender-approved
+furnace change order sitting in `leads.json` with no funnel record at all)
+and a garage-extension referral (Kim Childers, logged in `leads.json` on
+2026-08-22, estimate written and sent 2026-08-23 — also absent from
+`/funnel`). Root cause: only two ingestion paths existed
+(`sync-allo`/`sync-website`), and Sean's real day-to-day runs almost
+entirely through Claude/Cowork sessions producing estimates, proposals, and
+change orders — a path with no funnel-writing convention at all. Considered
+and rejected: a manual "add to funnel" UI form — it has the same
+forget-to-use-it failure mode as the gap itself, just moved to a different
+button. Fixed instead with `lib/funnel-card.ts`'s `upsertFunnelCard()` +
+`POST /api/funnel/card`, a third writer alongside Allo/website that a
+Claude session calls as the standing last step of producing an
+estimate/proposal/change order — the same way it's already expected to use
+the WHITE GLOVE template. Unlike the other two importers, this one
+deliberately DOES move `status` (Sean, via the session, is the one deciding
+the stage — not an automated call/form log). Dedupe mirrors the website
+importer (phone-first, email-second) with a weak name+business fallback for
+a job logged before a phone/email is on file (e.g. a referral). Added
+`FunnelSourceSchema`'s `'claude'` value and a new `costUsd` field on
+`FunnelContact`/`FunnelJourney` (actual/estimated job cost, independent of
+`amountUsd`) so margin — "how much we did, what our profit was," Sean's own
+framing — becomes computable per job, not just revenue. Gmail/website
+auto-ingestion stays a lower-priority backstop for the rare job that never
+touches a Claude session. Tests in `tests/funnel-card.test.ts` and
+`tests/funnel-card-route.test.ts`. The two real cases above are queued for
+backfill via this same endpoint once confirmed reachable in production —
+not fabricated here, per HONESTY.
+
 **Apps funnel presence (2026-08-21 fix).** A dashboard review found the
 `rm-apps-funnel` roadmap item's "done" claim overstated what had shipped —
 the stage model was real (above), but `app/funnel/page.tsx` called
