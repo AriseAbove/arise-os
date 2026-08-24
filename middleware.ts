@@ -32,7 +32,7 @@ import type { NextRequest } from 'next/server';
 // .github/workflows/agent-cron-checks.yml). All of them share the same
 // CRON_SECRET bearer gate the route itself enforces, so this prefix bypass
 // is still just "let the route's own auth run", not a hole.
-const BYPASS_PREFIXES = ['/api/cron', '/api/voice/queue', '/api/aac-brain'];
+const BYPASS_PREFIXES = ['/api/cron', '/api/voice/queue', '/api/aac-brain', '/api/push/relay'];
 
 export function middleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;

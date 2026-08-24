@@ -74,4 +74,11 @@ describe('middleware — the app-wide Basic Auth wall', () => {
     const res = middleware(req('/api/voice/queue'));
     expect(res.status).not.toBe(401);
   });
+
+  test('never gates the push relay route — ~/.aac_brain/push_relay.py authenticates via PUSH_RELAY_SECRET, not Basic Auth', () => {
+    process.env.APP_BASIC_AUTH_USER = 'sean';
+    process.env.APP_BASIC_AUTH_PASS = 'correct-horse';
+    const res = middleware(req('/api/push/relay'));
+    expect(res.status).not.toBe(401);
+  });
 });

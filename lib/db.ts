@@ -335,6 +335,14 @@ CREATE TABLE IF NOT EXISTS voice_queue (
   created_at TEXT NOT NULL,
   consumed_at TEXT
 );
+CREATE TABLE IF NOT EXISTS push_queue (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  consumed_at TEXT
+);
 CREATE TABLE IF NOT EXISTS brain_health (
   id TEXT PRIMARY KEY,
   pending_actions INTEGER NOT NULL,
@@ -1350,6 +1358,45 @@ export function openDb(path: string) {
     },
   };
 
+  /** Fallback relay queue for Chief of Staff's ntfy push (2026-08-24). Live
+   *  diagnosis from Railway's own Console confirmed this service cannot
+   *  reach ntfy.sh's resolved IP at all (every attempt times out — general
+   *  outbound HTTPS is fine, e.g. api.github.com succeeds in ~40ms), most
+   *  likely ntfy.sh blocking Railway's shared egress IP range. Sean's Mac
+   *  reaches ntfy.sh fine — the AAC Brain's own pushes prove it — so
+   *  lib/agents/real.ts's chiefOfStaffRunWith enqueues here whenever a
+   *  direct sendNtfyPush attempt fails at the network level, and a small
+   *  poller on the Mac (~/.aac_brain/push_relay.py, same pattern as the
+   *  voice relay above) GETs /api/push/relay and forwards the exact
+   *  url/title/body to ntfy itself, which it can actually reach. Same
+   *  lifecycle as voiceQueue: atomic pop-and-consume, 24h sweep. */
+  const pushQueue = {
+    enqueue(item: { id: string; url: string; title: string; body: string; createdAt: string }): void {
+      db.prepare('INSERT INTO push_queue (id, url, title, body, created_at) VALUES (?, ?, ?, ?, ?)').run(
+        item.id,
+        item.url,
+        item.title,
+        item.body,
+        item.createdAt,
+      );
+    },
+    popNext(now: string): { id: string; url: string; title: string; body: string; createdAt: string } | null {
+      return db.transaction(() => {
+        const row = db
+          .prepare(
+            'SELECT id, url, title, body, created_at as createdAt FROM push_queue WHERE consumed_at IS NULL ORDER BY created_at ASC, id ASC LIMIT 1',
+          )
+          .get() as { id: string; url: string; title: string; body: string; createdAt: string } | undefined;
+        if (row) {
+          db.prepare('UPDATE push_queue SET consumed_at = ? WHERE id = ?').run(now, row.id);
+        }
+        const cutoff = new Date(new Date(now).getTime() - 24 * 60 * 60 * 1000).toISOString();
+        db.prepare('DELETE FROM push_queue WHERE consumed_at IS NOT NULL AND consumed_at < ?').run(cutoff);
+        return row ?? null;
+      })();
+    },
+  };
+
   const funnelClear = {
     /** Drop every funnel row — used by the seed to purge retired demo journeys. */
     clearAll(): void {
@@ -1481,6 +1528,7 @@ export function openDb(path: string) {
     funnel: { ...funnel, ...funnelClear },
     seedMeta,
     voiceQueue,
+    pushQueue,
     people,
     sopTasks,
     workflows,
