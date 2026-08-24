@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { getBrainProvider } from '@/lib/brain';
 import { parseInboxConfigs, unreadCounts } from '@/lib/connectors/email';
 import { calendarStatus, upcomingEvents, caldavAccounts } from '@/lib/connectors/gcal';
@@ -17,7 +18,15 @@ import { oneupConfigured } from '@/lib/connectors/oneup';
 import { publishQueuedSocialPosts } from '@/lib/social-oneup';
 import { runtimeEnv } from '@/lib/creds';
 import { getDb } from '@/lib/data';
-import { gatherSignals, briefingText, newHighSeveritySignals, markNotified, sendNtfyPush, describeFetchError } from '@/lib/chief-of-staff';
+import {
+  gatherSignals,
+  briefingText,
+  newHighSeveritySignals,
+  markNotified,
+  sendNtfyPush,
+  describeFetchError,
+  ntfyTargetUrl,
+} from '@/lib/chief-of-staff';
 import type { LlmToolSpec } from '@/lib/connectors/llm';
 import type { AgentRunResult, RuntimeAgent } from '@/lib/agents/runtime';
 import type { FounderDb } from '@/lib/db';
@@ -147,6 +156,26 @@ async function socialPulseRun(): Promise<AgentRunResult> {
  *  "Succeeded" — 69 straight hourly runs whose push failed with "fetch
  *  failed" showed up as ~99% OK. See lib/analytics.ts's runOutcomeCounts and
  *  app/analytics/page.tsx for where this now surfaces. */
+/** Fallback for a genuinely failed direct ntfy push (2026-08-24): live
+ *  diagnosis from Railway's own Console confirmed this service cannot reach
+ *  ntfy.sh's IP at all — see lib/db.ts's pushQueue doc comment for the full
+ *  story. Rather than just recording the failure, queue the exact
+ *  url/title/body for ~/.aac_brain/push_relay.py (a poller on Sean's Mac,
+ *  which reaches ntfy.sh fine) to forward. Returns true when the relay
+ *  enqueue itself succeeded — a plain synchronous DB write, so this only
+ *  fails if the database itself is broken, not because of the network
+ *  problem the relay exists to route around. */
+function relayFailedPush(db: FounderDb, env: Record<string, string | undefined>, title: string, body: string, now: Date): boolean {
+  const url = ntfyTargetUrl(env);
+  if (!url) return false;
+  try {
+    db.pushQueue.enqueue({ id: randomUUID(), url, title, body, createdAt: now.toISOString() });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function chiefOfStaffRunWith(
   db: FounderDb,
   env: Record<string, string | undefined>,
@@ -158,25 +187,38 @@ export async function chiefOfStaffRunWith(
   let pushNote = '';
   let pushFailed = false;
   if (fresh.length > 0) {
+    const title = 'Chief of Staff';
+    const body = fresh.map((s) => s.summary).join('\n');
     try {
-      const push = await sendNtfyPush(env, 'Chief of Staff', fresh.map((s) => s.summary).join('\n'), fetchImpl);
+      const push = await sendNtfyPush(env, title, body, fetchImpl);
       if (push.sent) {
         markNotified(db, fresh);
         pushNote = ` · pushed ${fresh.length} new`;
       } else if ('reason' in push) {
         // Honest no-op — nothing was attempted (e.g. NTFY_TOPIC not set).
         // Not configured is not the same as broken, so this doesn't count
-        // as a push failure.
+        // as a push failure, and there's no known target to relay to.
         pushNote = ` · ${fresh.length} new high-severity, push not sent (${push.reason})`;
+      } else if (relayFailedPush(db, env, title, body, now)) {
+        // ntfy rejected the direct push, but the relay queue accepted it —
+        // Sean's Mac will actually deliver it, so this is handled, not
+        // failed. The signal is marked notified now (same as a direct
+        // success) so the next hourly run doesn't re-queue a duplicate.
+        markNotified(db, fresh);
+        pushNote = ` · ${fresh.length} new high-severity, relayed via Mac (ntfy status ${push.status}, direct push unreachable)`;
       } else {
-        // ntfy responded, but rejected the push — a genuine failure.
         pushFailed = true;
         pushNote = ` · ${fresh.length} new high-severity, push failed (ntfy status ${push.status})`;
       }
     } catch (err) {
-      pushFailed = true;
       const why = describeFetchError(err);
-      pushNote = ` · ${fresh.length} new high-severity, push failed (${why})`;
+      if (relayFailedPush(db, env, title, body, now)) {
+        markNotified(db, fresh);
+        pushNote = ` · ${fresh.length} new high-severity, relayed via Mac (${why})`;
+      } else {
+        pushFailed = true;
+        pushNote = ` · ${fresh.length} new high-severity, push failed (${why})`;
+      }
     }
   }
   return {

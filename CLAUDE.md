@@ -944,6 +944,67 @@ pre-wired to any one machine.
   path), `tests/workflow-stats.test.ts` (`workflowsForBusiness`), and
   `tests/smoke.test.ts` (both pages now render under an explicit
   `?business=` prop the same way `/org`/`/funnel` already did).
+- **Chief of Staff's ntfy push routed through a Mac relay — Railway can't
+  reach ntfy.sh at all (2026-08-24 fix).** The "Push-failure honesty" entry
+  above (2026-08-21) made a genuinely failed push visible everywhere — but
+  it stayed failed. Production kept showing Chief of Staff "Degraded ·
+  PUSH FAILED" on every hourly run with no way to see why, because
+  `app/agents/page.tsx`'s Activity list truncates `lastRun.summary` to 56
+  characters (`.slice(0, 56)`) with the full string only reachable via the
+  row's own `title` attribute — reading that (via direct DOM inspection,
+  not the visibly rendered/truncated text) surfaced the real error for the
+  first time: `fetch failed`. Root-caused with live evidence, not a guess:
+  using Railway's own web Console (a root shell directly in the running
+  production container — `curl` isn't installed there, so diagnosis used
+  Node's native `fetch`/`dns.resolve4` instead), general outbound HTTPS
+  works fine (`api.github.com` succeeded in ~40ms) but every connection
+  attempt to ntfy.sh's own resolved IP (`159.203.148.75`) timed out — DNS
+  resolution itself succeeds, so this isn't a DNS or config problem, most
+  likely ntfy.sh (a frequently-abused free service) blocking Railway's
+  shared egress IP range. `NTFY_TOPIC` was confirmed correctly set in
+  Railway's variables and `NTFY_URL` correctly unset (defaulting to the
+  public ntfy.sh) — nothing was misconfigured on our side. Sean's Mac
+  reaches ntfy.sh fine (`~/.aac_brain/ntfy.py`'s pushes prove it daily), so
+  rather than just recording the failure, a genuinely-failed direct push
+  now gets queued for the Mac to forward instead — mirroring the existing
+  `voiceQueue`/`speaker_daemon.py` relay architecture already in this repo
+  (see below) rather than inventing a new pattern. `lib/chief-of-staff.ts`
+  gained `ntfyTargetUrl(env)` (the topic/base-URL computation, pulled out
+  of `sendNtfyPush` so a caller can compute the identical target without
+  duplicating the logic). `lib/db.ts` gained a `push_queue` table and
+  `pushQueue` repo (`enqueue`/`popNext`), structurally identical to
+  `voiceQueue` — atomic pop-and-consume, FIFO by `created_at`/id, 24h sweep
+  of consumed rows. `app/api/push/relay/route.ts` is a GET-only route (the
+  enqueue happens server-side inside `chiefOfStaffRunWith`, never via an
+  exposed POST) gated by `PUSH_RELAY_SECRET`, same bearer pattern as
+  `VOICE_RELAY_SECRET`; added to `middleware.ts`'s `BYPASS_PREFIXES` for the
+  same reason as the other machine-caller routes. `lib/agents/real.ts`'s
+  `chiefOfStaffRunWith` now tries `relayFailedPush()` on any genuine direct
+  push failure (both a thrown fetch error and a non-2xx ntfy status) before
+  giving up: a successful relay enqueue calls `markNotified` (same as a
+  direct success, so the next hourly run doesn't re-queue a duplicate) and
+  reports `pushFailed: false` with a summary noting it was "relayed via
+  Mac (...)" — `pushFailed: true` is now reserved for the case where the
+  relay itself can't help either (e.g. the DB write behind it throws), so a
+  genuinely undeliverable push is still reported honestly rather than
+  silently claimed as handled. On Sean's Mac, `~/.aac_brain/push_relay.py`
+  (a new LaunchAgent-scheduled script, `com.aac.brain.push-relay.plist`,
+  every 5 minutes since Chief of Staff only runs hourly) polls
+  `GET /api/push/relay` with `Authorization: Bearer $PUSH_RELAY_SECRET` and
+  forwards whatever comes back straight to ntfy as a dumb transport layer —
+  deliberately not reusing `~/.aac_brain/ntfy.py`'s `push()`, which is tied
+  to the Brain's own topics/action buttons and unrelated to Chief of
+  Staff's. It reuses the already-configured `AAC_BRAIN_URL` for the app's
+  base URL rather than asking Sean to set a second URL for the same app;
+  only `PUSH_RELAY_SECRET` is new Mac-side config, in `~/.aac_brain/.env`.
+  Tests: `tests/chief-of-staff.test.ts` (network-failure and non-2xx-status
+  scenarios now assert the relay path — `pushFailed: false`, the signal
+  marked notified, and the item actually landing in `pushQueue` — plus a
+  new case confirming `pushFailed` can still become `true` when the relay
+  queue itself is broken), `tests/push-queue.test.ts` (mirrors
+  `tests/voice-queue.test.ts`), `tests/push-relay-route.test.ts` (mirrors
+  `tests/voice-queue-route.test.ts`), and a new middleware bypass case in
+  `tests/middleware.test.ts`.
 - Credentials go in `.env.local` (gitignored). NEVER commit keys.
 
 ## Views

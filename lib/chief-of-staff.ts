@@ -168,6 +168,18 @@ export type NtfyResult =
  *  the whole hourly cron run rather than failing fast and loud. */
 const NTFY_TIMEOUT_MS = 10_000;
 
+/** The exact ntfy publish URL sendNtfyPush would hit for this env — exported
+ *  so a caller whose direct push fails (see lib/agents/real.ts's
+ *  chiefOfStaffRunWith) can relay to the SAME target instead of guessing at
+ *  it a second time. Returns null when NTFY_TOPIC isn't set (nothing to
+ *  relay to either). */
+export function ntfyTargetUrl(env: Env): string | null {
+  const topic = env.NTFY_TOPIC;
+  if (!topic) return null;
+  const base = env.NTFY_URL ?? 'https://ntfy.sh';
+  return `${base}/${encodeURIComponent(topic)}`;
+}
+
 /** Post a push notification to ntfy.sh (or a self-hosted instance via
  *  NTFY_URL). Honest no-op — never a silent failure — when NTFY_TOPIC isn't
  *  configured. The topic is URL-encoded so a stray character (whitespace,
@@ -179,10 +191,9 @@ export async function sendNtfyPush(
   body: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<NtfyResult> {
-  const topic = env.NTFY_TOPIC;
-  if (!topic) return { sent: false, reason: 'NTFY_TOPIC not set' };
-  const base = env.NTFY_URL ?? 'https://ntfy.sh';
-  const res = await fetchImpl(`${base}/${encodeURIComponent(topic)}`, {
+  const url = ntfyTargetUrl(env);
+  if (!url) return { sent: false, reason: 'NTFY_TOPIC not set' };
+  const res = await fetchImpl(url, {
     method: 'POST',
     headers: { Title: title },
     body,

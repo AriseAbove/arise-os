@@ -234,7 +234,15 @@ describe('chiefOfStaffRunWith (the real agent run — push resilience)', () => {
   // Chief of Staff run FAILED with the cryptic summary "fetch failed", even
   // though signal-gathering itself worked perfectly. A flaky push should
   // never take down a run whose real job — surfacing signals — succeeded.
-  test('a network failure while pushing does not fail the whole run, and is flagged as pushFailed', async () => {
+  test('a network failure while pushing relays through the Mac queue instead of failing the run (2026-08-24)', async () => {
+    // Regression: on 2026-08-24, live diagnosis from Railway's own Console
+    // confirmed this service cannot reach ntfy.sh's IP at all (general
+    // outbound HTTPS works fine — connecting to ntfy.sh specifically times
+    // out). Rather than just recording the failure, a genuine network-level
+    // push failure now queues the exact url/title/body into pushQueue for
+    // ~/.aac_brain/push_relay.py on Sean's Mac (which reaches ntfy.sh fine)
+    // to forward — so this is handled, not failed, whenever NTFY_TOPIC is
+    // configured (i.e. there's a real target to relay to).
     const db = openDb(':memory:');
     seedJourney(db, { id: 'hot-1', likelihood: 85 }, '2026-08-13');
     const cause = Object.assign(new Error('getaddrinfo ENOTFOUND ntfy.sh'), { code: 'ENOTFOUND' });
@@ -248,20 +256,53 @@ describe('chiefOfStaffRunWith (the real agent run — push resilience)', () => {
       new Date('2026-08-14T00:00:00Z'),
     );
     expect(result.ok).toBe(true);
-    // Regression: this used to be the opaque "push failed (fetch failed)"
-    // with no way to tell DNS failure from a firewall block. The real cause
-    // must be visible in the summary now.
-    expect(result.summary).toContain('push failed (fetch failed — getaddrinfo ENOTFOUND ntfy.sh (ENOTFOUND))');
-    // Part B: a genuinely failed push must never be reported as full success.
-    expect(result.pushFailed).toBe(true);
-    // The signal must stay un-notified so the next run retries the push.
-    expect(newHighSeveritySignals(db, (result.data as { signals: Signal[] }).signals)).toHaveLength(1);
+    // The real cause is still surfaced in the summary, now alongside the
+    // fact that it was successfully relayed rather than dropped.
+    expect(result.summary).toContain(
+      'relayed via Mac (fetch failed — getaddrinfo ENOTFOUND ntfy.sh (ENOTFOUND))',
+    );
+    // A relayed push is handled, not failed.
+    expect(result.pushFailed).toBeFalsy();
+    // The relay queue actually received the exact notification to forward.
+    const queued = db.pushQueue.popNext('2026-08-14T00:00:01.000Z');
+    expect(queued?.url).toBe('https://ntfy.sh/aac-cos');
+    expect(queued?.title).toBe('Chief of Staff');
+    // Marked notified the same as a direct success, so the next hourly run
+    // doesn't re-queue a duplicate.
+    expect(newHighSeveritySignals(db, (result.data as { signals: Signal[] }).signals)).toHaveLength(0);
     db.close();
   });
 
-  test('ntfy responding with a non-2xx status is also a genuine push failure, not just "not sent"', async () => {
+  test('ntfy responding with a non-2xx status also relays through the Mac queue, not just "not sent"', async () => {
     const db = openDb(':memory:');
     seedJourney(db, { id: 'hot-4', likelihood: 88 }, '2026-08-13');
+    const fetchImpl = async () => new Response(null, { status: 503 });
+    const result = await chiefOfStaffRunWith(
+      db,
+      { NTFY_TOPIC: 'aac-cos' },
+      fetchImpl as unknown as typeof fetch,
+      new Date('2026-08-14T00:00:00Z'),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.pushFailed).toBeFalsy();
+    expect(result.summary).toContain('relayed via Mac (ntfy status 503, direct push unreachable)');
+    const queued = db.pushQueue.popNext('2026-08-14T00:00:01.000Z');
+    expect(queued?.url).toBe('https://ntfy.sh/aac-cos');
+    expect(newHighSeveritySignals(db, (result.data as { signals: Signal[] }).signals)).toHaveLength(0);
+    db.close();
+  });
+
+  test('when the relay queue itself cannot accept the notification, pushFailed still becomes true', async () => {
+    // The relay is the fallback of last resort — if the DB write behind it
+    // fails too (not the network problem it exists to route around, but a
+    // genuinely broken queue), the run must still honestly report the push
+    // as failed and leave the signal un-notified for the next retry, rather
+    // than silently claiming success.
+    const db = openDb(':memory:');
+    seedJourney(db, { id: 'hot-5', likelihood: 91 }, '2026-08-13');
+    db.pushQueue.enqueue = () => {
+      throw new Error('disk full');
+    };
     const fetchImpl = async () => new Response(null, { status: 503 });
     const result = await chiefOfStaffRunWith(
       db,
