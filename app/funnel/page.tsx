@@ -20,6 +20,7 @@ import { FunnelRadialLazy, FunnelSpaceLazy } from '@/components/FunnelGraphsLazy
 import AlloSyncButton from '@/components/AlloSyncButton';
 import WebsiteSyncButton from '@/components/WebsiteSyncButton';
 import StageAdvanceControl from '@/components/StageAdvanceControl';
+import MilestoneControl from '@/components/MilestoneControl';
 import { alloConfigured } from '@/lib/connectors/allo';
 import { parseInboxConfigs } from '@/lib/connectors/email';
 import { runtimeEnv } from '@/lib/creds';
@@ -210,6 +211,7 @@ function JourneyTableRows({
             {stageLabel}
           </span>
           <StageAdvanceControl journey={{ id: journey.id, business: journey.business, status: journey.status }} />
+          <MilestoneControl journey={{ id: journey.id, business: journey.business, status: journey.status }} />
         </td>
         <td
           className={`px-3 py-2.5 font-mono text-[11px] ${meta.state === 'stalled' && decay === 0 ? 'text-os-err' : 'text-os-dim'}`}
@@ -473,6 +475,7 @@ export default async function FunnelPage({
                         <td className="px-3 py-2 font-mono text-[10px] uppercase tracking-wide">
                           {ALL_FUNNEL_STAGES.find((s) => s.id === j.status)?.label ?? j.status}
                           <StageAdvanceControl journey={{ id: j.id, business: j.business, status: j.status }} />
+                          <MilestoneControl journey={{ id: j.id, business: j.business, status: j.status }} />
                         </td>
                         <td className="px-3 py-2 font-mono text-[10.5px]">{meta.daysSinceLastTouch}d</td>
                         <td className="px-3 py-2 font-mono text-[10.5px]">{j.likelihood}%</td>
