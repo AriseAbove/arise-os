@@ -25,6 +25,7 @@ import {
   FunnelContactSchema,
   FunnelTouchSchema,
   FunnelJourneySchema,
+  ProjectMilestoneSchema,
   PersonSchema,
   SopTaskSchema,
   WorkflowSchema,
@@ -59,6 +60,7 @@ import {
   type FunnelTouch,
   type FunnelJourney,
   type FunnelBusiness,
+  type ProjectMilestone,
   type Person,
   type SopTask,
   type Workflow,
@@ -296,6 +298,17 @@ CREATE TABLE IF NOT EXISTS funnel_touches (
 -- makes that batch fetch (and the old per-row lookup before it) an index seek
 -- instead of a full table scan. Found by today's 3-agent system audit.
 CREATE INDEX IF NOT EXISTS idx_funnel_touches_contact ON funnel_touches (contact_id);
+-- Construction-phase milestones (the client tracker's "which trade is done"
+-- half, distinct from FunnelStage's sales-pipeline half) — one row per
+-- contact per completed milestone id, see lib/project-milestones.ts.
+CREATE TABLE IF NOT EXISTS project_milestones (
+  id TEXT PRIMARY KEY,
+  contact_id TEXT NOT NULL REFERENCES funnel_contacts(id),
+  milestone_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  completed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_project_milestones_contact ON project_milestones (contact_id);
 CREATE TABLE IF NOT EXISTS workflows (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -1313,6 +1326,36 @@ export function openDb(path: string) {
     },
   };
 
+  const rowToProjectMilestone = (r: any): ProjectMilestone =>
+    ProjectMilestoneSchema.parse({
+      id: r.id,
+      contactId: r.contact_id,
+      milestoneId: r.milestone_id,
+      label: r.label,
+      completedAt: r.completed_at,
+    });
+
+  const projectMilestones = {
+    /** Completed milestones for one contact, in the order they were
+     *  completed — NOT catalog order, since a real job can do trades out of
+     *  the typical sequence (e.g. tile before cabinets on a rush job). The
+     *  tracker UI sorts by the catalog's own order for display; this is the
+     *  honest record of what actually happened and when. */
+    forContact(contactId: string): ProjectMilestone[] {
+      return (
+        db
+          .prepare('SELECT * FROM project_milestones WHERE contact_id = ? ORDER BY completed_at, id')
+          .all(contactId) as any[]
+      ).map(rowToProjectMilestone);
+    },
+    insert(m: ProjectMilestone): void {
+      ProjectMilestoneSchema.parse(m);
+      db.prepare(
+        'INSERT OR REPLACE INTO project_milestones (id, contact_id, milestone_id, label, completed_at) VALUES (?, ?, ?, ?, ?)',
+      ).run(m.id, m.contactId, m.milestoneId, m.label, m.completedAt);
+    },
+  };
+
   const seedMeta = {
     get(key: string): string | null {
       const row = db.prepare('SELECT value FROM seed_meta WHERE key = ?').get(key) as { value: string } | undefined;
@@ -1526,6 +1569,7 @@ export function openDb(path: string) {
     emailList,
     socialPosts,
     funnel: { ...funnel, ...funnelClear },
+    projectMilestones,
     seedMeta,
     voiceQueue,
     pushQueue,

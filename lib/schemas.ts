@@ -630,6 +630,23 @@ export const FunnelJourneySchema = FunnelContactSchema.extend({
   touches: z.array(FunnelTouchSchema),
 });
 
+// Construction-phase milestones — the "Domino's tracker" Sean asked for on
+// 2026-08-27, the half of the client-progress picture the sales FunnelStage
+// pipeline doesn't cover: once a job reaches `active_project`, a client
+// wants to see the trade sequence itself (demo, rough-in, drywall, ...), not
+// another sales-stage label. One row per contact per milestone id from
+// `AAC_PROJECT_MILESTONES` (lib/project-milestones.ts) — completed only,
+// same convention as FunnelTouch: a milestone with no row here just hasn't
+// happened yet, no separate "pending" state to keep in sync.
+export const ProjectMilestoneSchema = z.object({
+  id: z.string().min(1),
+  contactId: z.string().min(1),
+  milestoneId: z.string().min(1), // e.g. "drywall" — id into AAC_PROJECT_MILESTONES
+  label: z.string().min(1), // denormalized at completion time, so a later
+  // edit to the milestone catalog's wording never rewrites history
+  completedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'completedAt must look like 2026-06-13'),
+});
+
 // One bar of the funnel: journeys that progressed at least this far.
 export const FunnelStageRowSchema = z.object({
   stage: FunnelStageSchema,
@@ -698,6 +715,7 @@ export type FunnelSource = z.infer<typeof FunnelSourceSchema>;
 export type FunnelContact = z.infer<typeof FunnelContactSchema>;
 export type FunnelTouch = z.infer<typeof FunnelTouchSchema>;
 export type FunnelJourney = z.infer<typeof FunnelJourneySchema>;
+export type ProjectMilestone = z.infer<typeof ProjectMilestoneSchema>;
 export type FunnelStageRow = z.infer<typeof FunnelStageRowSchema>;
 export type FunnelSummary = z.infer<typeof FunnelSummarySchema>;
 export type WorkflowOwnerKind = z.infer<typeof WorkflowOwnerKindSchema>;
