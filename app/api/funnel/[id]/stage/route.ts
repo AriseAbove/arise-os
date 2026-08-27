@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/data';
 import { advanceStage } from '@/lib/funnel-stage';
+import { notifyStageChange } from '@/lib/funnel-notify';
 import { FunnelStageSchema } from '@/lib/schemas';
 
 export const dynamic = 'force-dynamic';
@@ -26,9 +27,16 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     );
   }
 
-  const result = advanceStage(getDb(), params.id, parsed.data, new Date());
+  const db = getDb();
+  const result = advanceStage(db, params.id, parsed.data, new Date());
   if (!result.ok) {
     return NextResponse.json(result, { status: result.status });
   }
-  return NextResponse.json(result);
+  // Client-progress-tracker notification (Sean, 2026-08-27: "keep the
+  // customer in the loop"). Never fails the stage move itself — a
+  // notification failure (no email/phone on file, SMS not configured,
+  // send error) is reported alongside the successful stage change, same
+  // ok/pushFailed-separation pattern as Chief of Staff's ntfy push.
+  const notify = await notifyStageChange(db, params.id);
+  return NextResponse.json({ ...result, notify });
 }
