@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { JetBrains_Mono } from 'next/font/google';
+import { headers } from 'next/headers';
 import './globals.css';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
@@ -58,7 +59,46 @@ function buildCommands(): Command[] {
   return [...NAV_COMMANDS, ...agents, ...tools];
 }
 
+// The public client tracker (/track/[token], 2026-08-27) is a homeowner-
+// facing page with its own APEX-brand identity (charcoal/gold/cream,
+// Playfair Display + Montserrat — see app/track/[token]/page.tsx) — it must
+// never render inside the internal os.* dashboard shell: no Sidebar nav
+// exposing every other client's data, no Topbar business switcher, no
+// Command Palette pulling the agent roster, no Conductor dock. Next.js's App
+// Router only supports one root layout without restructuring every existing
+// route into a route group, so this is a targeted pathname check instead —
+// middleware.ts forwards the real request path as `x-pathname` (a Server
+// Component root layout has no access to next/navigation's client-only
+// usePathname).
+function isPublicTrackerPath(pathname: string | null): boolean {
+  return pathname !== null && pathname.startsWith('/track');
+}
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const pathname = headers().get('x-pathname');
+  if (isPublicTrackerPath(pathname)) {
+    return (
+      <html lang="en" suppressHydrationWarning>
+        <head>
+          {/* Playfair Display + Montserrat — the APEX brand's own type pair
+              (PLAYBOOK/BRAND_REFERENCE.md). A plain Google Fonts link tag
+              rather than next/font/google: this page must also import
+              cleanly outside Next's build (tests/smoke.test.ts renders every
+              page.tsx in the app directory directly under Vitest, where
+              next/font's SWC-only transform isn't available), and every
+              other AAC brand document in this business already loads fonts
+              this same way. */}
+          <link rel="preconnect" href="https://fonts.googleapis.com" />
+          <link
+            href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Playfair+Display:wght@400;500;600;700&display=swap"
+            rel="stylesheet"
+          />
+        </head>
+        <body>{children}</body>
+      </html>
+    );
+  }
+
   const businessFilter = resolveBusinessFilter(readBusinessFilterCookie());
   return (
     <html lang="en" className={fontMono.variable} suppressHydrationWarning>

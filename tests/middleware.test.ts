@@ -81,4 +81,18 @@ describe('middleware — the app-wide Basic Auth wall', () => {
     const res = middleware(req('/api/push/relay'));
     expect(res.status).not.toBe(401);
   });
+
+  test('never gates the public client tracker — a homeowner has no APP_BASIC_AUTH_USER/PASS; the token in the URL is its own auth', () => {
+    process.env.APP_BASIC_AUTH_USER = 'sean';
+    process.env.APP_BASIC_AUTH_PASS = 'correct-horse';
+    const res = middleware(req('/track/some-token-value'));
+    expect(res.status).not.toBe(401);
+  });
+
+  test('forwards the request pathname as x-pathname so the root layout can hide dashboard chrome for /track', () => {
+    delete process.env.APP_BASIC_AUTH_USER;
+    delete process.env.APP_BASIC_AUTH_PASS;
+    const res = middleware(req('/track/some-token-value'));
+    expect(res.headers.get('x-middleware-request-x-pathname')).toBe('/track/some-token-value');
+  });
 });

@@ -32,18 +32,41 @@ import type { NextRequest } from 'next/server';
 // .github/workflows/agent-cron-checks.yml). All of them share the same
 // CRON_SECRET bearer gate the route itself enforces, so this prefix bypass
 // is still just "let the route's own auth run", not a hole.
-const BYPASS_PREFIXES = ['/api/cron', '/api/voice/queue', '/api/aac-brain', '/api/push/relay'];
+//
+// `/track` is different in kind from the rest of this list: it's not a
+// machine caller with its own bearer secret, it's the public client-facing
+// job tracker (2026-08-27, "keep the customer in the loop") — a homeowner
+// clicking a link in a text/email has no APP_BASIC_AUTH_USER/PASS and never
+// should. Its own auth is the token itself: lib/track-token.ts's HMAC-signed
+// token in the URL is unguessable and scoped to exactly one contact, so this
+// bypass trades "protected by Sean's login" for "protected by knowing the
+// specific link", the same trust model as e.g. a Google Calendar share link.
+// Never add a route under this prefix that reads or writes anything beyond
+// one contact's own client-visible progress.
+const BYPASS_PREFIXES = ['/api/cron', '/api/voice/queue', '/api/aac-brain', '/api/push/relay', '/track'];
+
+// Forwards the request pathname as a header so app/layout.tsx's server
+// component (no access to next/navigation's usePathname — that's client-only)
+// can tell a /track request apart from the internal dashboard and skip
+// rendering Sidebar/Topbar/CommandPalette/ConductorPanel around a public
+// client-facing page. Purely a rendering decision, not a security boundary
+// — the actual gate is the BYPASS_PREFIXES check above/below.
+function withPathnameHeader(req: NextRequest): NextResponse {
+  const headers = new Headers(req.headers);
+  headers.set('x-pathname', req.nextUrl.pathname);
+  return NextResponse.next({ request: { headers } });
+}
 
 export function middleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;
   if (BYPASS_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
-    return NextResponse.next();
+    return withPathnameHeader(req);
   }
 
   const user = process.env.APP_BASIC_AUTH_USER;
   const pass = process.env.APP_BASIC_AUTH_PASS;
   if (!user || !pass) {
-    return NextResponse.next();
+    return withPathnameHeader(req);
   }
 
   const auth = req.headers.get('authorization');
@@ -53,7 +76,7 @@ export function middleware(req: NextRequest): NextResponse {
     const suppliedUser = sep === -1 ? decoded : decoded.slice(0, sep);
     const suppliedPass = sep === -1 ? '' : decoded.slice(sep + 1);
     if (suppliedUser === user && suppliedPass === pass) {
-      return NextResponse.next();
+      return withPathnameHeader(req);
     }
   }
 

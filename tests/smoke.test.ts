@@ -44,6 +44,11 @@ const PAGES: PageEntry[] = [
   { file: 'personas/page.tsx', load: () => import('@/app/personas/page') },
   { file: 'privacy/page.tsx', load: () => import('@/app/privacy/page') },
   { file: 'eula/page.tsx', load: () => import('@/app/eula/page') },
+  {
+    file: 'track/[token]/page.tsx',
+    load: () => import('@/app/track/[token]/page'),
+    props: { params: { token: 'not-a-real-token' } },
+  },
 ];
 
 function discoverPages(dir: string, base = ''): string[] {
