@@ -1005,6 +1005,77 @@ pre-wired to any one machine.
   `tests/voice-queue.test.ts`), `tests/push-relay-route.test.ts` (mirrors
   `tests/voice-queue-route.test.ts`), and a new middleware bypass case in
   `tests/middleware.test.ts`.
+- **Client progress tracker — the "Domino's tracker" (2026-08-27).** Sean's
+  own framing: "how Domino's does it... your pizza is being prepared...
+  going into the oven... keeping them in the loop as things get done." A
+  public, homeowner-facing page (`/track/[token]`) that shows a client where
+  their job stands, built on the existing `/funnel` pipeline rather than a
+  new system. Two halves: the sales-stage half (the existing `FunnelStage`
+  pipeline, unchanged) and a new construction-milestone half for once a job
+  reaches `active_project` (AAC's own trade sequence has no model anywhere
+  in this app until now).
+  - `lib/funnel-track-copy.ts` translates 5 of AAC's internal stage ids
+    (`walkthrough_scheduled`, `estimate_sent`, `contract_signed`,
+    `active_project`, `complete_paid`) into client-facing copy —
+    `inquiry`/`follow_up`/`negotiation` and every Apps stage stay internal,
+    never surfaced to a client, same principle as this tracker being AAC-only.
+  - `lib/schemas.ts`'s new `ProjectMilestoneSchema` + `lib/db.ts`'s
+    `project_milestones` table/repo record completed trades. AAC's real
+    14-week sequence (from the aac-senior-pm skill, not invented) lives in
+    `lib/project-milestones.ts` as `AAC_PROJECT_MILESTONES`;
+    `completeMilestone()` mirrors `advanceStage()`'s validate-then-write
+    shape and is idempotent by (contact, milestone) — a second call updates
+    the date rather than duplicating. Wired to `POST /api/funnel/[id]/
+    milestone` (`GET` for the completed list) and a new
+    `components/MilestoneControl.tsx` on `/funnel`, right next to
+    `StageAdvanceControl` — same explicit-click discipline, only renders
+    once an AAC job is `active_project`.
+  - `lib/track-token.ts` mints/verifies a stateless HMAC-SHA256 token per
+    contact (`TRACK_TOKEN_SECRET`, no dev fallback on purpose) — the token
+    itself is the /track link's auth, since a homeowner has no
+    `APP_BASIC_AUTH_USER`/`PASS`. `middleware.ts`'s `BYPASS_PREFIXES` gained
+    `/track` for exactly this reason (see that file's own comment on the
+    trust model — a share-link, not a login).
+  - `lib/funnel-notify.ts` sends the actual notification (email via the
+    existing `lib/connectors/email.ts`, SMS via a new
+    `lib/connectors/sms.ts` — Twilio REST over plain `fetch`, since Allo has
+    no MCP/API connector in this repo to reuse for outbound texts) after a
+    successful stage move or milestone completion, honest-by-default like
+    every other connector: a missing `TRACK_TOKEN_SECRET`/`PUBLIC_APP_URL`,
+    no email/phone on file, or a send failure is reported back on the
+    route's response (`notify: {...}`), never silently swallowed or claimed
+    successful.
+  - `app/track/[token]/page.tsx` renders in AAC's actual client-facing
+    brand (charcoal `#1C1A17` / gold `#B8894A` / cream `#F6F4EF`, Playfair
+    Display + Montserrat — PLAYBOOK/BRAND_REFERENCE.md's APEX palette), not
+    the internal `os.*` dashboard theme. Since a homeowner must never see
+    the internal Sidebar/Topbar/Command Palette/Conductor dock,
+    `app/layout.tsx` now branches on the request path (forwarded by
+    `middleware.ts` as an `x-pathname` header, since a Server Component root
+    layout has no access to `next/navigation`'s client-only `usePathname`)
+    and renders a bare `<html><body>{children}</body></html>` for `/track`
+    instead of restructuring every existing route into a Next.js route
+    group. Its Google Fonts are loaded via a plain `<link>` tag in that
+    branch rather than `next/font/google` — this page also has to import
+    cleanly under Vitest (`tests/smoke.test.ts` renders every real
+    `page.tsx`), where `next/font`'s SWC-only transform isn't available; a
+    plain link tag is also exactly how every other AAC brand document in
+    this business already loads fonts. An invalid token, a non-AAC journey,
+    and an internal-only stage all render the identical "not found" page —
+    never a distinguishing message that would let an outside party probe
+    whether a given link maps to something real.
+  - New env vars: `TRACK_TOKEN_SECRET`, `PUBLIC_APP_URL`,
+    `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_FROM_NUMBER` (see
+    `.env.example`). Without them the tracker still degrades honestly: no
+    `TRACK_TOKEN_SECRET` means no link can be minted (not "worked but
+    insecurely"), and Twilio being unset just means SMS doesn't send while
+    email still can (if `INBOX_n_*` is already configured).
+  - Tests: `tests/project-milestones.test.ts`, `tests/track-token.test.ts`,
+    `tests/funnel-track-copy.test.ts`, `tests/funnel-notify.test.ts`,
+    `tests/sms.test.ts`, `tests/funnel-milestone-route.test.ts`,
+    `tests/track-page.test.ts`, plus extended coverage in
+    `tests/middleware.test.ts`, `tests/smoke.test.ts`, and
+    `tests/smoke-api.test.ts`.
 - Credentials go in `.env.local` (gitignored). NEVER commit keys.
 
 ## Views
@@ -1020,6 +1091,10 @@ distinct from `/brain` above) · `/roadmap` the real rebuild roadmap · `/analyt
 `/personas` surfaced into their own "Marketing" nav group (`NAV_MARKETING` in
 `lib/nav.ts`) on 2026-08-14 now that OneUp (social connector) is live — they
 still render honest empty states wherever there's genuinely nothing yet.
+`/track/[token]` — the public, no-login client progress tracker (2026-08-27,
+see the Connectors & agents section above) — is NOT part of the internal
+dashboard nav; it's reached only via a signed link sent to a client, and
+deliberately renders outside the `os.*` shell entirely.
 
 ## Conventions
 
