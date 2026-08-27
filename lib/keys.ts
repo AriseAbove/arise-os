@@ -51,6 +51,21 @@ export const KEY_SLOTS: KeySlot[] = [
     group: 'Chief of Staff',
     hint: 'optional — defaults to https://ntfy.sh; set only when self-hosting',
   },
+  {
+    envVar: 'TRACK_TOKEN_SECRET',
+    label: 'Tracker token secret',
+    group: 'Client Tracker',
+    hint: 'long random string — signs /track/[token] links, lib/track-token.ts',
+  },
+  {
+    envVar: 'PUBLIC_APP_URL',
+    label: 'Public app URL',
+    group: 'Client Tracker',
+    hint: 'this app\'s own base URL, used to build the /track link sent to clients',
+  },
+  { envVar: 'TWILIO_ACCOUNT_SID', label: 'Twilio account SID', group: 'Client Tracker' },
+  { envVar: 'TWILIO_AUTH_TOKEN', label: 'Twilio auth token', group: 'Client Tracker' },
+  { envVar: 'TWILIO_FROM_NUMBER', label: 'Twilio sending number', group: 'Client Tracker' },
 ];
 
 export function maskSecret(value: string): string {

@@ -21,6 +21,10 @@ export const INTEGRATIONS: Integration[] = [
   { slug: 'telegram', name: 'Telegram', tagline: 'Chats & bots', category: 'Communication' },
   { slug: 'zoom', name: 'Zoom', tagline: 'Meetings & recordings', category: 'Communication', popular: true },
   { slug: 'manychat', name: 'ManyChat', tagline: 'IG DM automation', category: 'Communication' },
+  // Real: lib/connectors/sms.ts sends the text-message leg of the client
+  // progress tracker's notifications (2026-08-27) via Twilio's REST API once
+  // TWILIO_ACCOUNT_SID/AUTH_TOKEN/FROM_NUMBER are set.
+  { slug: 'twilio', name: 'Twilio', tagline: 'Outbound SMS notifications', category: 'Communication', connectorId: 'sms', envKeys: [] },
 
   // Productivity
   { slug: 'notion', name: 'Notion', tagline: 'Docs & databases', category: 'Productivity', popular: true },

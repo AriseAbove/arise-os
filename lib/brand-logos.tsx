@@ -68,6 +68,11 @@ const LETTERMARK: Record<string, string> = {
   quickbooks: '#2CA01C',
   phone: '#64748B',
   projectdox: '#0F766E',
+  // Fallback only — simple-icons does carry a real Twilio mark (siTwilio),
+  // so BrandLogo's simple-icons check above wins in practice; this entry
+  // just guarantees hasBrandMark never regresses to false if that package's
+  // export naming ever shifts.
+  twilio: '#F22F46',
 };
 
 function siFor(slug: string): SiIcon | null {

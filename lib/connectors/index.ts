@@ -1,4 +1,5 @@
 import { emailStatus } from '@/lib/connectors/email';
+import { smsStatus } from '@/lib/connectors/sms';
 import { calendarStatus } from '@/lib/connectors/gcal';
 import { quickbooksStatus } from '@/lib/connectors/quickbooks';
 import { alloStatus } from '@/lib/connectors/allo';
@@ -24,6 +25,7 @@ const CHECKS: [string, ConnectorStatus['kind'], () => Promise<ConnectorStatus>][
   ['brain', 'brain', brainConnectorStatus],
   ['llm', 'orchestration', llmStatus],
   ['email', 'email', () => emailStatus(runtimeEnv())],
+  ['sms', 'sms', () => Promise.resolve(smsStatus(runtimeEnv()))],
   ['calendar', 'calendar', calendarStatus],
   ['quickbooks', 'payments', () => quickbooksStatus(runtimeEnv())],
   ['allo', 'crm', () => alloStatus(runtimeEnv())],

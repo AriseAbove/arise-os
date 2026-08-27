@@ -2,6 +2,7 @@ export type ConnectorState = 'connected' | 'not_configured' | 'error';
 
 export type ConnectorKind =
   | 'email'
+  | 'sms'
   | 'calendar'
   | 'slack'
   | 'payments'
