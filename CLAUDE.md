@@ -1270,9 +1270,52 @@ pre-wired to any one machine.
   `lib/seed.ts`'s `sop-gmail-worker` entry and
   `docs/gmail-worker-triage-sop.md` both updated to describe this honestly;
   `SEED_VERSION` bumped to `2026-08-29-gmail-worker-extraction-drafts-sop`.
-  **Not live anywhere yet** — same no-push-access handoff as the two Gmail
-  Worker changes above; this lands as a PR for Sean to review and merge,
-  and `MAIL_EXTRACTION_ENABLED` has never been set in production.
+  **Merged 2026-08-28** (PR #3, same no-push-access patch/bundle handoff as
+  the two Gmail Worker changes above) — live in `rebuild/arise-above` and
+  deployed on Railway, but `MAIL_EXTRACTION_ENABLED` still has never been
+  set in production, so extraction/drafting does not actually run yet.
+  **Zero API cost by design** — worth stating plainly since it's easy to
+  assume otherwise given Gemini's original spec named a
+  `MAIL_EXTRACTION_MODEL` env var implying an LLM call per message: neither
+  `lib/mail-extraction.ts` nor `lib/mail-drafts.ts` calls any model or
+  external API at all, for any message, ever. It's regex/keyword matching
+  and string templating, the same as `lib/mail-triage.ts`'s junk scorer.
+  Turning `MAIL_EXTRACTION_ENABLED` on adds zero incremental LLM/API spend —
+  the only per-message cost anywhere in this pipeline is the IMAP fetch
+  itself. If a future ask wants the summary/reply to read more naturally via
+  an actual LLM, that would be a deliberate, separate architectural change
+  from what's built today, not a flag flip, and would need its own explicit
+  go-ahead and per-message cost estimate before shipping.
+- **`/comms` gains a "Drafts" review tab (2026-08-28).** The piece the
+  extraction/drafting feature above was missing: until now,
+  `POST /api/comms/approve-draft` existed with no UI in front of it, so a
+  pending draft was only visible by querying the database directly.
+  `lib/mail-draft-review.ts`'s `pendingDraftReviews()` is a read-only join —
+  every `pending` row from `db.mailDrafts.pending()` (new repo method,
+  oldest-first) enriched with its extraction (`db.mailExtractions.byId`) and
+  its triage-verified sender/subject (`db.mailTriageLog.byMessageId`) — so
+  the review card never has to guess at a reply-to address any more than the
+  send path itself already refuses to. `app/comms/page.tsx` calls it
+  server-side (same pattern as the existing `contactTags`/`gatherCommsFeed`
+  calls on that page) and passes the result into a new third tab on
+  `CommsTabs` (`components/CommsDrafts.tsx`), alongside Messaging and
+  Meetings. Each card shows the intent, extracted fields (only the ones
+  actually found — `null` fields are simply omitted from the card, never
+  shown as a placeholder), the executive summary, and the proposed reply,
+  with three actions that all call the existing
+  `POST /api/comms/approve-draft` — **no new send path, no new route that
+  can trigger `sendEmailReply`** — Approve & send, Edit (reveals a textarea,
+  then Send edited), and Reject. A 404/409 response (already resolved
+  elsewhere, e.g. from a concurrent tab) drops the card from the queue
+  rather than leaving a dead action behind; any other failure leaves the
+  card in place with the error shown inline so it can be retried, matching
+  `StageAdvanceControl`'s existing busy/error pattern elsewhere in this
+  codebase. Tests: `tests/mail-draft-review.test.ts` (enrichment, oldest-
+  first ordering, pending-only filtering, the limit parameter, and an
+  honest-fallback case for a draft whose extraction or triage row is
+  somehow missing). Empty by default — this tab only ever shows a card once
+  `MAIL_EXTRACTION_ENABLED` is set `true` and at least one message has run
+  through the pipeline; empty state reads "no drafts waiting for review."
 - Credentials go in `.env.local` (gitignored). NEVER commit keys.
 
 ## Views

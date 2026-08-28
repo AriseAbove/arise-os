@@ -156,6 +156,16 @@ only on messages this same pass already classified `protected`:
   server-side from `mail_triage_log` (keyed by Message-ID) — the real,
   triage-verified sender for that message — never taken from the request
   body, so a caller can't redirect a send to an arbitrary address.
+- `/comms`'s "Drafts" tab (added 2026-08-28) is the human review surface for
+  this queue — every `pending` draft shown with its extracted fields,
+  summary, and proposed reply, each with Approve & send / Edit / Reject.
+  All three call the same `POST /api/comms/approve-draft` route above; the
+  UI adds no new way to send anything.
+- **No LLM anywhere in this stage, so no per-message API cost.** Both the
+  extraction step and the drafting step are regex/keyword matching and
+  string templating — the same discipline as the junk scorer earlier in
+  this doc. Enabling `MAIL_EXTRACTION_ENABLED` does not add any model or
+  external API spend.
 
 ## What's NOT in scope
 

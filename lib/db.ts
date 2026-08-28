@@ -1700,6 +1700,16 @@ export function openDb(path: string) {
       const row = db.prepare('SELECT * FROM mail_drafts WHERE id = ?').get(id) as any;
       return row ? rowToMailDraft(row) : null;
     },
+    /** Every draft still awaiting a human decision, oldest first — the query
+     * behind the /comms "Drafts" review tab. Oldest-first so the queue is
+     * worked in the order messages actually arrived, not last-in-first-out. */
+    pending(limit = 100): MailDraft[] {
+      return (
+        db
+          .prepare("SELECT * FROM mail_drafts WHERE status = 'pending' ORDER BY created_at ASC, rowid ASC LIMIT ?")
+          .all(limit) as any[]
+      ).map(rowToMailDraft);
+    },
     /** The only way a draft's status ever changes — called exclusively from
      * POST /api/comms/approve-draft after a real human tap. `editedText`
      * overwrites the proposed reply only when provided (an EDIT_AND_SEND
