@@ -66,6 +66,24 @@ export const KEY_SLOTS: KeySlot[] = [
   { envVar: 'TWILIO_ACCOUNT_SID', label: 'Twilio account SID', group: 'Client Tracker' },
   { envVar: 'TWILIO_AUTH_TOKEN', label: 'Twilio auth token', group: 'Client Tracker' },
   { envVar: 'TWILIO_FROM_NUMBER', label: 'Twilio sending number', group: 'Client Tracker' },
+  {
+    envVar: 'MAIL_TRIAGE_MODE',
+    label: 'Mail triage mode',
+    group: 'Mail Triage',
+    hint: 'off (default) / dry_run / live — see lib/connectors/email-triage.ts',
+  },
+  {
+    envVar: 'MAIL_TRIAGE_MAX_MOVES',
+    label: 'Mail triage max moves/run',
+    group: 'Mail Triage',
+    hint: 'live mode only — defaults to 20',
+  },
+  {
+    envVar: 'MAIL_TRIAGE_LIVE_INBOXES',
+    label: 'Mail triage live inboxes',
+    group: 'Mail Triage',
+    hint: 'comma-separated inbox ids (e.g. inbox-1) — unset means every configured inbox',
+  },
 ];
 
 export function maskSecret(value: string): string {

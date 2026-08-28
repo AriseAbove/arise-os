@@ -1076,6 +1076,54 @@ pre-wired to any one machine.
     `tests/track-page.test.ts`, plus extended coverage in
     `tests/middleware.test.ts`, `tests/smoke.test.ts`, and
     `tests/smoke-api.test.ts`.
+- **Gmail Worker gains a real junk-triage capability, off by default
+  (2026-08-28).** Sean asked for the Gmail Worker's duties to expand beyond
+  read-only unread counts to include real triage — specifically detecting
+  junk/spam and moving it to Trash (never a permanent delete, never "just
+  archive"). The agent's own SOP previously read "Never mark mail read or
+  delete anything — read-only by design"; that line described a genuine
+  code limitation, not just a policy, since no move/delete tool was ever
+  wired to the IMAP connector. `lib/mail-triage.ts` is the new pure
+  classifier: exclusions (known CRM contact, existing thread, starred,
+  has an attachment, or a client/project keyword like "203k"/"estimate"/
+  "permit" in the subject) are checked first and always win outright,
+  before any junk signal (host spam flag, a narrow high-precision scam
+  phrase list, or a `List-Unsubscribe` header with no prior contact) is
+  even evaluated — a message matching neither list is `'review'`, never
+  `'junk'`. `lib/connectors/email-triage.ts` is the IMAP-facing runner:
+  finds the inbox's real `\Trash`-flagged mailbox via `client.list()`
+  (never a guessed folder name — Gmail's is literally `[Gmail]/Trash`),
+  and every message evaluated (moved or not) is logged to the new
+  `mail_triage_log` table (`lib/db.ts`'s `mailTriageLog` repo,
+  `MailTriageLogSchema` in `lib/schemas.ts`) — an append-only audit trail,
+  not just a run summary. Entirely gated by `MAIL_TRIAGE_MODE` (unset/`off`
+  = the pre-existing read-only behavior, completely unaffected;
+  `dry_run` = classify and log, move nothing; `live` = also move confirmed
+  junk), `MAIL_TRIAGE_MAX_MOVES` (per-run cap, default 20 — matters most
+  on `seanadavis0@gmail.com`/`1solutionsgroup1@gmail.com`, which have years
+  of backlog unread mail and would otherwise all get evaluated in one run),
+  and `MAIL_TRIAGE_LIVE_INBOXES` (which inbox ids may actually move mail in
+  live mode — lets the approved rollout scope live trashing to `inbox-1`
+  alone before ever touching the two personal inboxes, with zero code
+  change to expand later). `gmailRun` (`lib/agents/real.ts`) calls
+  `triageAllInboxes` after its existing unread-count logic and folds a
+  short summary in; a triage failure never fails the whole run, since
+  unread counts are the primary job. `lib/seed.ts`'s `sop-gmail-worker`
+  entry (`SEED_VERSION` bumped to `2026-08-28-gmail-worker-triage-sop`) was
+  rewritten to describe this honestly — off by default, phased rollout,
+  never a guessed folder, never a permanent delete — rather than either the
+  stale "read-only by design" claim or an aspirational overstatement of
+  what's live before Sean turns it on. Full approved spec (rollout phases,
+  exact criteria, circuit breakers) in
+  `docs/gmail-worker-triage-sop.md`. Tests: `tests/mail-triage.test.ts`
+  (classifier), `tests/email-triage-run.test.ts` (IMAP runner, mocked
+  ImapFlow — mode gating, the per-run cap, missing-Trash-folder handling,
+  scoped live inboxes), `tests/mail-triage-log.test.ts` (repo round-trip).
+  **Still needs, before Sean's Phase 1 dry-run can start for real:** this
+  branch has not been merged — it was built and tested in a clone by a
+  Claude/Cowork session with no push access to this repo (see that
+  session's handoff for why), so it's landing as a PR for Sean to review
+  and merge himself, not a direct commit.
 - Credentials go in `.env.local` (gitignored). NEVER commit keys.
 
 ## Views

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { getBrainProvider } from '@/lib/brain';
 import { parseInboxConfigs, unreadCounts } from '@/lib/connectors/email';
+import { triageAllInboxes } from '@/lib/connectors/email-triage';
 import { calendarStatus, upcomingEvents, caldavAccounts } from '@/lib/connectors/gcal';
 import {
   quickbooksStatus,
@@ -50,13 +51,39 @@ async function gmailRun(): Promise<AgentRunResult> {
   const counts = await unreadCounts(process.env);
   const failed = counts.filter((c) => c.error);
   const total = counts.reduce((sum, c) => sum + c.unread, 0);
+  const summary = counts
+    .map((c) => `${c.inbox}: ${c.error ? `ERROR ${c.error.slice(0, 60)}` : `${c.unread} unread`}`)
+    .join(' · ')
+    .concat(` · total ${total} unread`);
+
+  // Junk-triage expansion (2026-08-28, approved SOP) — off unless
+  // MAIL_TRIAGE_MODE is explicitly set to dry_run or live; the pre-existing
+  // unread-count behavior above is unaffected either way. A triage failure
+  // never fails the whole run — unread counts are the primary job here.
+  const triage = await triageAllInboxes(process.env).catch((err) => ({
+    config: { mode: 'off' as const, maxMovesPerRun: 0, liveInboxIds: null },
+    results: [],
+    error: err instanceof Error ? err.message : String(err),
+  }));
+  const triageSummary =
+    triage.config.mode === 'off'
+      ? ''
+      : ' · triage(' +
+        triage.config.mode +
+        '): ' +
+        triage.results
+          .map(
+            (r) =>
+              `${r.inboxName} ${r.junk} junk/${r.moved} moved/${r.review} review` +
+              (r.trashUnavailable ? ' (no Trash folder found — nothing moved)' : '') +
+              (r.error ? ` ERROR ${r.error.slice(0, 60)}` : ''),
+          )
+          .join(', ');
+
   return {
     ok: failed.length < counts.length,
-    summary: counts
-      .map((c) => `${c.inbox}: ${c.error ? `ERROR ${c.error.slice(0, 60)}` : `${c.unread} unread`}`)
-      .join(' · ')
-      .concat(` · total ${total} unread`),
-    data: counts,
+    summary: summary + triageSummary,
+    data: { counts, triage: triage.results },
   };
 }
 

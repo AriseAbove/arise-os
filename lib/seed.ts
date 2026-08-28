@@ -249,13 +249,17 @@ const sopTasks: SopTask[] = [
   {
     id: 'sop-gmail-worker', departmentId: 'dept-comms', assigneeKind: 'agent', assigneeId: 'gmail-worker',
     title: 'Triage the inboxes',
-    summary: 'Up to four IMAP inboxes, honest unread counts.',
+    summary: 'Up to four IMAP inboxes, honest unread counts, junk moved to Trash where enabled.',
     steps: [
       'Poll each configured IMAP inbox for unread counts and recent mail',
       'Report per-inbox errors instead of hiding a dead connection',
       'Feed recent messages into the unified comms timeline',
-      'Flag inboxes that have not been configured yet',
-      'Never mark mail read or delete anything — read-only by design',
+      // Junk triage is OFF by default (MAIL_TRIAGE_MODE unset) — the four
+      // steps above are the only thing that runs until Sean turns it on.
+      'When junk triage is enabled: classify each unread message as junk, review, or not junk — a known contact, an existing thread, a starred message, an attachment, or a client/project keyword always wins and is never touched',
+      'In dry_run mode: log every verdict for review, move nothing',
+      'In live mode: move only confirmed junk to that inbox\'s real Trash folder, capped per run, and only for inboxes explicitly enabled — never a permanent delete, never a guessed folder',
+      'Log every triage decision — moved or not — to an audit trail Sean can read',
     ],
   },
   {
@@ -557,7 +561,7 @@ const skills: Omit<Skill, 'markdown'>[] = [
 
 /** Bump when the seed content changes shape — existing DBs re-seed once to
  *  pick up the new baseline (and purge retired rows). */
-export const SEED_VERSION = '2026-08-21-aac-workflows';
+export const SEED_VERSION = '2026-08-28-gmail-worker-triage-sop';
 
 export function seedDatabase(db: FounderDb): void {
   // The whole reseed runs as ONE SQLite transaction, not ~100 separate
