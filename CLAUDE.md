@@ -1124,6 +1124,97 @@ pre-wired to any one machine.
   Claude/Cowork session with no push access to this repo (see that
   session's handoff for why), so it's landing as a PR for Sean to review
   and merge himself, not a direct commit.
+- **Gmail Worker's junk triage rewritten to "Zero-Scan, High-Confidence
+  Quarantine" (2026-08-28, same day as the entry above).** After seeing the
+  first real dry-run numbers from the three-bucket (junk/review/not_junk)
+  model, Sean gave a full redesign spec directly, plus his own reasoning for
+  it: "if we make a structure SOP they will follow it and it will bring the
+  percentage of hallucination down a lot making it so they don't have to
+  improvise on their own." The classifier was already fully deterministic —
+  zero LLM involvement, so zero hallucination risk on this path already —
+  but the bucket model itself changed shape entirely. `lib/mail-triage.ts`'s
+  `classifyForTriage` now scores every non-fast-path message 0-100 via
+  `junkConfidence` (host spam flag → 97, a narrow scam-phrase list → 96,
+  `List-Unsubscribe` with no prior contact → 75, nothing → 0) and buckets
+  into three verdicts instead of the old three: `>= 95` → **trash** (moved
+  straight to Trash, capped at `MAIL_TRIAGE_MAX_MOVES`/run, default 20),
+  `60-94` → **quarantine** (moved to a new "Quarantine" IMAP mailbox,
+  created automatically via `client.mailboxCreate()` — idempotent per
+  ImapFlow's own `created: boolean` contract, no separate existence check
+  needed — capped at `MAIL_TRIAGE_MAX_QUARANTINE`/run, default 50), `< 60` →
+  **protected** (left alone, exactly the old fast-path-exclusion behavior,
+  now also the honest default for genuinely ambiguous mail). The five
+  fast-path exclusions (known contact, thread reply, starred, attachment,
+  client/project keyword) are unchanged and still checked first, before any
+  scoring runs.
+  The bigger addition is the quarantine's own life cycle, per Sean's
+  explicit design: "I will no longer review daily digests. The quarantine
+  folder will serve as a silent safety net if a missing email is ever
+  brought up." So nothing in this pipeline pings or digests Sean about a
+  quarantine verdict, ever — that was already true of the old `review`
+  bucket's logging-only behavior, but is now a stated, permanent design
+  choice rather than an interim state waiting on a review UI. A quarantined
+  message that's never rescued releases itself to **Trash** — never a
+  permanent/expunge delete, the same non-negotiable rule this feature has
+  carried since its first version — after `MAIL_TRIAGE_QUARANTINE_DAYS`
+  (default 14). "Auto-purge" in Sean's own wording was deliberately
+  implemented as "move to Trash," not an actual delete; Gmail's own 30-day
+  Trash retention is the last word, and this codebase never calls anything
+  that expunges a message itself. The expiry sweep (`lib/connectors/
+  email-triage.ts`'s `purgeExpiredQuarantine`, run at the end of every live
+  `triageInbox` pass via `db.mailTriageLog.dueForPurge()`/`markPurged()`)
+  matches by the message's RFC Message-ID header
+  (`envelope.messageId`, captured at classification time), never by IMAP
+  UID — a UID is only valid within the mailbox that issued it and the
+  message gets an entirely new one the moment it's moved into Quarantine. A
+  row with no recorded Message-ID, or a Trash-move that fails, stays pending
+  and is retried on a later run rather than silently dropped; a row whose
+  message is already gone from Quarantine (Sean rescued or deleted it
+  himself) is still marked resolved, honestly, with nothing left to move.
+  `MailTriageLogSchema` gained `confidence` (0-100), `messageId`
+  (nullable), and `purgedAt` (nullable — set once by the sweep, never
+  overwritten again); the verdict enum changed from `'junk'|'not_junk'|
+  'review'` to `'trash'|'quarantine'|'protected'` — a breaking, undocumented-
+  migration change for any pre-existing dry-run rows (there were no shipped
+  callers of the old shape to migrate, confirmed by grep, so this was
+  accepted rather than versioned). `lib/db.ts` gained a
+  `migrateMailTriageLogTable` retrofit (same `safeAlter` pattern as every
+  other column addition here) for the three new columns plus a
+  `(verdict, moved, purged_at, created_at)` index the purge sweep's query
+  uses. `docs/gmail-worker-triage-sop.md` was rewritten in full as the new
+  authoritative spec (replacing the original three-bucket document
+  entirely, not appending to it); `lib/seed.ts`'s `sop-gmail-worker` entry
+  was rewritten to match and `SEED_VERSION` bumped to
+  `2026-08-28-gmail-worker-quarantine-sop`. `.env.example` and `lib/keys.ts`
+  gained `MAIL_TRIAGE_MAX_QUARANTINE`/`MAIL_TRIAGE_QUARANTINE_DAYS`
+  alongside the existing `MAIL_TRIAGE_MAX_MOVES`. Tests fully rewritten for
+  the new model: `tests/mail-triage.test.ts` (classifier — fast-path,
+  deterministic scoring, bucketing, ambiguous-defaults-to-protected),
+  `tests/email-triage-run.test.ts` (IMAP runner, including a new
+  `describe('quarantine-expiry sweep')` block covering the Message-ID
+  match, not-yet-expired, already-gone, no-Message-ID, and
+  never-in-dry_run cases), `tests/mail-triage-log.test.ts` (repo round-trip
+  plus new coverage for `dueForPurge`/`markPurged`). Fixing the new tests
+  surfaced a latent isolation gap in the existing
+  `FOUNDER_OS_DB=':memory:'` test-isolation convention: `lib/data.ts`'s
+  `getDb()` singleton persists across every test in a file regardless of
+  toggling the env var in `beforeEach`, so multiple tests in one file that
+  each insert real `mail_triage_log` rows leaked state into each other
+  (confirmed live — two tests failed with rows from earlier tests in the
+  same file still present). Fixed by adding `lib/data.ts`'s
+  `resetDbForTests()` (closes and drops the cached singleton so the next
+  `getDb()` opens a genuinely fresh instance), called alongside setting
+  `FOUNDER_OS_DB` in the `triageInbox` describe block's `beforeEach` — a
+  test-only export, never called from application code, and a fix any
+  future test file hitting the same pattern can reuse.
+  **Still not live anywhere:** this is a rewrite of the spec and the code
+  behind it, built and tested in the same clone as the entry above, with
+  the same no-push-access handoff constraint. The Railway deployment is
+  still running the OLD three-bucket dry-run model until Sean reviews and
+  merges this PR himself — `MAIL_TRIAGE_MODE=live` has never been enabled
+  in production under either version of this feature, and enabling it
+  needs its own separate, explicit go-ahead regardless of which model is
+  merged.
 - Credentials go in `.env.local` (gitignored). NEVER commit keys.
 
 ## Views

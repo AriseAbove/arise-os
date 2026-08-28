@@ -1,18 +1,34 @@
 /**
- * Pure junk classification for the Gmail Worker's inbox-triage expansion
- * (2026-08-28, per Sean's approved SOP — see docs/gmail-worker-triage-sop.md).
- * Zero IO here on purpose: every signal is passed in already extracted, so
- * this is trivially unit-testable and the exclusion/junk rule set can be
- * read start to finish without an IMAP client in the way.
+ * Pure junk classification for the Gmail Worker's inbox-triage capability.
  *
- * The ordering is the whole safety story: exclusions are checked FIRST and
- * win outright, no matter how many junk signals also happen to match. A
- * message that matches neither list is 'review', never 'junk' — an
- * unrecognized pattern must never be treated as license to move something
- * real. This mirrors the approved SOP's "when ambiguous, leave it alone."
+ * Rewritten 2026-08-28 to Sean's "Zero-Scan, High-Confidence Quarantine"
+ * model: a message either bypasses triage entirely (fast-path safety), or
+ * gets a deterministic junk-confidence score that buckets it into one of
+ * three actions. There is no LLM in this decision — every score comes from
+ * a fixed, auditable point value attached to a specific signal (host spam
+ * flag, a narrow scam-phrase match, or a bare List-Unsubscribe header).
+ * Sean asked for this precisely so the agent never "improvises": the same
+ * input always produces the same score, every time, and the score is only
+ * ever computed AFTER every fast-path exclusion below has already missed.
+ *
+ * Zero IO here on purpose: every signal is passed in already extracted, so
+ * this is trivially unit-testable and the whole rule set can be read start
+ * to finish without an IMAP client in the way.
+ *
+ *   >= 95  'trash'      — moved straight to Trash (capped per run)
+ *   60-94  'quarantine' — moved to a dedicated Quarantine folder, silently,
+ *                         and auto-released to Trash after N days if never
+ *                         rescued (see lib/connectors/email-triage.ts)
+ *   < 60   'protected'  — left exactly where it is, in the inbox
+ *
+ * The ordering is still the whole safety story: fast-path exclusions are
+ * checked FIRST and win outright, no matter how many junk signals also
+ * happen to match — a known contact, an existing thread, a starred
+ * message, an attachment, or a client/project keyword in the subject never
+ * gets scored at all, let alone moved.
  */
 
-export type MailTriageVerdict = 'not_junk' | 'junk' | 'review';
+export type MailTriageVerdict = 'trash' | 'quarantine' | 'protected';
 
 export type TriageInput = {
   fromAddress: string;
@@ -34,8 +50,17 @@ export type TriageInput = {
 
 export type TriageVerdict = {
   verdict: MailTriageVerdict;
+  /** 0-100 junk-confidence. Always 0 for a fast-path exclusion (it was
+   * never scored — not "scored zero"). Deterministic: same input, same
+   * number, every time. */
+  confidence: number;
   reason: string;
 };
+
+/** >= this score: high-confidence junk, straight to Trash. */
+export const TRASH_THRESHOLD = 95;
+/** >= this score (and below TRASH_THRESHOLD): ambiguous, Quarantine. */
+export const QUARANTINE_THRESHOLD = 60;
 
 /** Subject-line phrases that mean "this is a real client/project message" —
  * checked before any junk signal, and winning outright when matched. */
@@ -54,9 +79,9 @@ const CLIENT_KEYWORDS = [
 ];
 
 /** High-precision scam phrasing — deliberately narrow. A missed scam stays
- * in the inbox for a human to see (safe); a false match moves a real email
- * (not safe) — so this list only holds phrases with very low legitimate-use
- * rates, not generic marketing language. */
+ * in the inbox for a human to see (safe); a false match trashes a real
+ * email (not safe) — so this list only holds phrases with very low
+ * legitimate-use rates, not generic marketing language. */
 const SCAM_KEYWORDS = [
   'wire transfer immediately',
   'gift card',
@@ -67,44 +92,76 @@ const SCAM_KEYWORDS = [
   'verify your account immediately',
 ];
 
+/** Fixed point values per signal — the entire "confidence" story. Nothing
+ * here is a guess or an average; each number is a deliberate policy choice
+ * about how reliable that one signal is. Host-level spam flags and the
+ * narrow scam-phrase list both clear the 95 trash threshold on their own;
+ * a bare List-Unsubscribe with no prior contact (routine bulk marketing,
+ * not necessarily malicious) lands in the 60-94 quarantine band instead of
+ * being trashed outright. */
+const HOST_SPAM_FLAG_CONFIDENCE = 97;
+const SCAM_KEYWORD_CONFIDENCE = 96;
+const BULK_UNSUBSCRIBE_CONFIDENCE = 75;
+const NO_SIGNAL_CONFIDENCE = 0;
+
 function findMatch(haystack: string, needles: readonly string[]): string | undefined {
   const lower = haystack.toLowerCase();
   return needles.find((needle) => lower.includes(needle));
 }
 
-export function classifyForTriage(input: TriageInput): TriageVerdict {
-  const fromLower = input.fromAddress.trim().toLowerCase();
-
-  // --- Exclusions first. Any one of these wins outright. ---
-  if (fromLower && input.knownSenders.has(fromLower)) {
-    return { verdict: 'not_junk', reason: 'sender is a known contact' };
-  }
-  if (input.isThreadReply) {
-    return { verdict: 'not_junk', reason: 'part of an existing conversation thread' };
-  }
-  if (input.flagged) {
-    return { verdict: 'not_junk', reason: 'starred/flagged by a person' };
-  }
-  if (input.hasAttachments) {
-    return { verdict: 'not_junk', reason: 'message has an attachment' };
-  }
-  const clientKeyword = findMatch(input.subject, CLIENT_KEYWORDS);
-  if (clientKeyword) {
-    return { verdict: 'not_junk', reason: `subject mentions "${clientKeyword}"` };
-  }
-
-  // --- Junk signals. Reached only once every exclusion above is a miss. ---
+/** The deterministic score itself, isolated so it's independently testable
+ * from the bucket thresholds above it. */
+export function junkConfidence(input: TriageInput): { score: number; signal: string | null } {
   if (input.hostSpamFlag) {
-    return { verdict: 'junk', reason: 'mail host already flagged this as spam' };
+    return { score: HOST_SPAM_FLAG_CONFIDENCE, signal: 'host spam flag' };
   }
   const scamKeyword = findMatch(input.subject, SCAM_KEYWORDS);
   if (scamKeyword) {
-    return { verdict: 'junk', reason: `subject matches a known scam pattern ("${scamKeyword}")` };
+    return { score: SCAM_KEYWORD_CONFIDENCE, signal: `scam phrase ("${scamKeyword}")` };
   }
   if (input.hasListUnsubscribe) {
-    return { verdict: 'junk', reason: 'bulk sender (List-Unsubscribe) with no prior contact' };
+    return { score: BULK_UNSUBSCRIBE_CONFIDENCE, signal: 'bulk sender (List-Unsubscribe), no prior contact' };
+  }
+  return { score: NO_SIGNAL_CONFIDENCE, signal: null };
+}
+
+export function classifyForTriage(input: TriageInput): TriageVerdict {
+  const fromLower = input.fromAddress.trim().toLowerCase();
+
+  // --- Fast-path safety. Any one of these bypasses junk scoring entirely. ---
+  if (fromLower && input.knownSenders.has(fromLower)) {
+    return { verdict: 'protected', confidence: 0, reason: 'known contact — bypasses triage entirely' };
+  }
+  if (input.isThreadReply) {
+    return { verdict: 'protected', confidence: 0, reason: 'existing conversation thread — bypasses triage entirely' };
+  }
+  if (input.flagged) {
+    return { verdict: 'protected', confidence: 0, reason: 'starred/flagged by a person — bypasses triage entirely' };
+  }
+  if (input.hasAttachments) {
+    return { verdict: 'protected', confidence: 0, reason: 'has an attachment — bypasses triage entirely' };
+  }
+  const clientKeyword = findMatch(input.subject, CLIENT_KEYWORDS);
+  if (clientKeyword) {
+    return {
+      verdict: 'protected',
+      confidence: 0,
+      reason: `subject mentions "${clientKeyword}" — bypasses triage entirely`,
+    };
   }
 
-  // --- Neither list matched: never guess. ---
-  return { verdict: 'review', reason: 'no exclusion and no confident junk signal — needs a human look' };
+  // --- Scored only once every fast-path exclusion above is a miss. ---
+  const { score, signal } = junkConfidence(input);
+
+  if (score >= TRASH_THRESHOLD) {
+    return { verdict: 'trash', confidence: score, reason: `${signal} (${score}% confidence)` };
+  }
+  if (score >= QUARANTINE_THRESHOLD) {
+    return { verdict: 'quarantine', confidence: score, reason: `${signal} (${score}% confidence) — ambiguous` };
+  }
+  return {
+    verdict: 'protected',
+    confidence: score,
+    reason: 'no exclusion and no confident junk signal — left in the inbox',
+  };
 }

@@ -74,9 +74,21 @@ export const KEY_SLOTS: KeySlot[] = [
   },
   {
     envVar: 'MAIL_TRIAGE_MAX_MOVES',
-    label: 'Mail triage max moves/run',
+    label: 'Mail triage max trash moves/run',
     group: 'Mail Triage',
-    hint: 'live mode only — defaults to 20',
+    hint: 'live mode only — >=95% confidence junk, moved straight to Trash — defaults to 20',
+  },
+  {
+    envVar: 'MAIL_TRIAGE_MAX_QUARANTINE',
+    label: 'Mail triage max quarantine moves/run',
+    group: 'Mail Triage',
+    hint: 'live mode only — 60-94% confidence, moved to the Quarantine folder — defaults to 50',
+  },
+  {
+    envVar: 'MAIL_TRIAGE_QUARANTINE_DAYS',
+    label: 'Mail triage quarantine expiry (days)',
+    group: 'Mail Triage',
+    hint: 'a quarantined message with no other action releases to Trash after this many days — defaults to 14',
   },
   {
     envVar: 'MAIL_TRIAGE_LIVE_INBOXES',

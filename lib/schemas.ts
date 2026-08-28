@@ -190,14 +190,26 @@ export const AgentRunSchema = z.object({
   pushFailed: z.boolean().default(false),
 });
 
-// Gmail Worker's junk-triage audit trail (2026-08-28) — one row per message
-// the triage pass actually looked at, regardless of verdict or mode, so
-// Sean can see exactly what would have moved (dry_run) or did move (live)
-// without trusting a summary line. Never overwritten; `mailTriageLog.recent`
-// is the whole audit story. See lib/mail-triage.ts for the classifier and
+// Gmail Worker's junk-triage audit trail (2026-08-28, rewritten same day to
+// Sean's "Zero-Scan, High-Confidence Quarantine" model) — one row per
+// message the triage pass actually looked at, regardless of verdict or
+// mode. Sean deliberately does not review this table day to day (his own
+// call: the Quarantine folder itself is the silent safety net, not this
+// log) — it exists as the real, unedited history in case a missing email
+// is ever brought up. Never overwritten; `mailTriageLog.recent`/`query` is
+// the whole audit story. See lib/mail-triage.ts for the classifier and
 // lib/connectors/email-triage.ts for the IMAP-facing runner.
-export const MailTriageVerdictSchema = z.enum(['not_junk', 'junk', 'review']);
+//
+// NOTE: verdict values were renamed from the original ('not_junk'/'junk'/
+// 'review') to 'protected'/'trash'/'quarantine' the same day this table
+// shipped. The only rows written under the old names were from that one
+// night's dry-run testing, before any shipped feature ever read this
+// table (grep-verified zero callers) — a documented gap, not silent data
+// loss.
+export const MailTriageVerdictSchema = z.enum(['trash', 'quarantine', 'protected']);
 export const MailTriageModeSchema = z.enum(['off', 'dry_run', 'live']);
+export type MailTriageVerdict = z.infer<typeof MailTriageVerdictSchema>;
+export type MailTriageMode = z.infer<typeof MailTriageModeSchema>;
 
 export const MailTriageLogSchema = z.object({
   id: z.string().min(1),
@@ -207,9 +219,26 @@ export const MailTriageLogSchema = z.object({
   fromAddress: z.string(),
   subject: z.string(),
   verdict: MailTriageVerdictSchema,
+  /** 0-100 deterministic junk-confidence score behind the verdict (see
+   * lib/mail-triage.ts's junkConfidence). Always 0 for a fast-path
+   * 'protected' exclusion — it was never scored, not "scored zero". */
+  confidence: z.number().int().min(0).max(100).default(0),
   reason: z.string(),
+  /** True only when this message was actually moved (to Trash or to
+   * Quarantine) in live mode within that run's cap — never true in
+   * dry_run, and never true for 'protected'. */
   moved: z.boolean(),
   mode: MailTriageModeSchema,
+  /** RFC Message-ID header, captured at classification time. Message-IDs
+   * survive an IMAP move (UIDs do not — a message gets a new UID in every
+   * mailbox it lands in), so this is the only reliable way to find a
+   * quarantined message again later for the 14-day purge sweep. Null when
+   * the message genuinely had none. */
+  messageId: z.string().nullable().default(null),
+  /** Set once the quarantine-expiry sweep has resolved this row (released
+   * to Trash, or found already gone) — makes the sweep idempotent so the
+   * same row is never reprocessed forever. Null while still pending. */
+  purgedAt: z.string().nullable().default(null),
   createdAt: z.string().min(1),
 });
 export type MailTriageLog = z.infer<typeof MailTriageLogSchema>;
