@@ -8,6 +8,7 @@ import { emailStatus } from '@/lib/connectors/email';
 import { calendarStatus, caldavAccounts, upcomingEvents } from '@/lib/connectors/gcal';
 import { alloStatus } from '@/lib/connectors/allo';
 import { getDb } from '@/lib/data';
+import { pendingDraftReviews } from '@/lib/mail-draft-review';
 import { Badge, Dot, SectionHead } from '@/components/terminal';
 
 export const dynamic = 'force-dynamic';
@@ -26,8 +27,13 @@ export default async function CommsPage() {
     alloStatus(),
     upcomingEvents(undefined, { days: 7, limit: 200 }),
   ]);
-  const tags = getDb().contactTags.all();
+  const db = getDb();
+  const tags = db.contactTags.all();
   const feed = annotatePriorities(rawFeed, tags);
+  // Gmail Worker's post-triage drafts awaiting a human decision (see
+  // lib/mail-draft-review.ts) — read fresh on every load since this page is
+  // force-dynamic, same as the rest of /comms.
+  const drafts = pendingDraftReviews(db);
   // Generic defaults ship in code; the operator's real work brands live in
   // COMMS_WORK_KEYWORDS (.env.local, gitignored) so they never reach the repo.
   const workKeywords = [...DEFAULT_WORK_KEYWORDS, ...parseWorkKeywords(process.env.COMMS_WORK_KEYWORDS)];
@@ -97,6 +103,7 @@ export default async function CommsPage() {
         nowISO={nowISO}
         workKeywords={workKeywords}
         totalUnread={totalUnread}
+        drafts={drafts}
       />
 
       {/* Honest per-channel status. Real configured-inbox count, not a
