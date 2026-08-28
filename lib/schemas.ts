@@ -190,6 +190,30 @@ export const AgentRunSchema = z.object({
   pushFailed: z.boolean().default(false),
 });
 
+// Gmail Worker's junk-triage audit trail (2026-08-28) — one row per message
+// the triage pass actually looked at, regardless of verdict or mode, so
+// Sean can see exactly what would have moved (dry_run) or did move (live)
+// without trusting a summary line. Never overwritten; `mailTriageLog.recent`
+// is the whole audit story. See lib/mail-triage.ts for the classifier and
+// lib/connectors/email-triage.ts for the IMAP-facing runner.
+export const MailTriageVerdictSchema = z.enum(['not_junk', 'junk', 'review']);
+export const MailTriageModeSchema = z.enum(['off', 'dry_run', 'live']);
+
+export const MailTriageLogSchema = z.object({
+  id: z.string().min(1),
+  inboxId: z.string().min(1),
+  inboxName: z.string().min(1),
+  uid: z.number().int(),
+  fromAddress: z.string(),
+  subject: z.string(),
+  verdict: MailTriageVerdictSchema,
+  reason: z.string(),
+  moved: z.boolean(),
+  mode: MailTriageModeSchema,
+  createdAt: z.string().min(1),
+});
+export type MailTriageLog = z.infer<typeof MailTriageLogSchema>;
+
 export const BroadcastReplySchema = z.object({
   id: z.string().min(1),
   broadcastId: z.string().min(1),

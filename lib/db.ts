@@ -11,6 +11,7 @@ import {
   ContactTagSchema,
   DepartmentSchema,
   DomainSchema,
+  MailTriageLogSchema,
   MetricSchema,
   PersonaSchema,
   PhaseSchema,
@@ -43,6 +44,7 @@ import {
   type ContactTag,
   type Department,
   type Domain,
+  type MailTriageLog,
   type Metric,
   type Persona,
   type Phase,
@@ -356,6 +358,20 @@ CREATE TABLE IF NOT EXISTS push_queue (
   created_at TEXT NOT NULL,
   consumed_at TEXT
 );
+CREATE TABLE IF NOT EXISTS mail_triage_log (
+  id TEXT PRIMARY KEY,
+  inbox_id TEXT NOT NULL,
+  inbox_name TEXT NOT NULL,
+  uid INTEGER NOT NULL,
+  from_address TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  verdict TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  moved INTEGER NOT NULL,
+  mode TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mail_triage_log_created ON mail_triage_log (created_at DESC);
 CREATE TABLE IF NOT EXISTS brain_health (
   id TEXT PRIMARY KEY,
   pending_actions INTEGER NOT NULL,
@@ -1440,6 +1456,53 @@ export function openDb(path: string) {
     },
   };
 
+  /** Gmail Worker's junk-triage audit trail — see MailTriageLogSchema. Insert
+   * is append-only (no update/delete): the whole point is an unedited record
+   * of what the triage pass actually decided, in dry_run or live mode. */
+  const mailTriageLog = {
+    insert(entry: MailTriageLog): void {
+      MailTriageLogSchema.parse(entry);
+      db.prepare(
+        `INSERT INTO mail_triage_log
+          (id, inbox_id, inbox_name, uid, from_address, subject, verdict, reason, moved, mode, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        entry.id,
+        entry.inboxId,
+        entry.inboxName,
+        entry.uid,
+        entry.fromAddress,
+        entry.subject,
+        entry.verdict,
+        entry.reason,
+        entry.moved ? 1 : 0,
+        entry.mode,
+        entry.createdAt,
+      );
+    },
+    recent(limit: number): MailTriageLog[] {
+      return (
+        db
+          .prepare('SELECT * FROM mail_triage_log ORDER BY created_at DESC, rowid DESC LIMIT ?')
+          .all(limit) as any[]
+      ).map((r) =>
+        MailTriageLogSchema.parse({
+          id: r.id,
+          inboxId: r.inbox_id,
+          inboxName: r.inbox_name,
+          uid: r.uid,
+          fromAddress: r.from_address,
+          subject: r.subject,
+          verdict: r.verdict,
+          reason: r.reason,
+          moved: Boolean(r.moved),
+          mode: r.mode,
+          createdAt: r.created_at,
+        }),
+      );
+    },
+  };
+
   const funnelClear = {
     /** Drop every funnel row — used by the seed to purge retired demo journeys. */
     clearAll(): void {
@@ -1573,6 +1636,7 @@ export function openDb(path: string) {
     seedMeta,
     voiceQueue,
     pushQueue,
+    mailTriageLog,
     people,
     sopTasks,
     workflows,
