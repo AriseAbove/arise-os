@@ -10,6 +10,21 @@ import { SEED_VERSION, seedDatabase } from '@/lib/seed';
  */
 let instance: FounderDb | null = null;
 
+/** Test-only escape hatch: closes and drops the cached singleton so the next
+ * getDb() call opens a brand-new instance (honoring whatever FOUNDER_OS_DB is
+ * set to at that moment). Toggling FOUNDER_OS_DB alone isn't enough for true
+ * per-test isolation within a single test file — the singleton above persists
+ * across tests regardless of the env var, so a `:memory:` DB opened by test 1
+ * is still the one test 2 reads unless this is called first (see
+ * tests/email-triage-run.test.ts's quarantine-expiry sweep suite, where
+ * dry_run/live tests insert real mail_triage_log rows). Never call this from
+ * application code.
+ */
+export function resetDbForTests(): void {
+  instance?.close();
+  instance = null;
+}
+
 export function getDb(): FounderDb {
   if (instance) return instance;
   const dbPath = process.env.FOUNDER_OS_DB ?? path.join(process.cwd(), 'data', 'founder-os.db');

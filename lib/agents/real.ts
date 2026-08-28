@@ -56,12 +56,13 @@ async function gmailRun(): Promise<AgentRunResult> {
     .join(' · ')
     .concat(` · total ${total} unread`);
 
-  // Junk-triage expansion (2026-08-28, approved SOP) — off unless
+  // Junk-triage expansion (2026-08-28, rewritten same day to Sean's
+  // "Zero-Scan, High-Confidence Quarantine" model) — off unless
   // MAIL_TRIAGE_MODE is explicitly set to dry_run or live; the pre-existing
   // unread-count behavior above is unaffected either way. A triage failure
   // never fails the whole run — unread counts are the primary job here.
   const triage = await triageAllInboxes(process.env).catch((err) => ({
-    config: { mode: 'off' as const, maxMovesPerRun: 0, liveInboxIds: null },
+    config: { mode: 'off' as const, maxTrashPerRun: 0, maxQuarantinePerRun: 0, quarantineDays: 14, liveInboxIds: null },
     results: [],
     error: err instanceof Error ? err.message : String(err),
   }));
@@ -74,8 +75,10 @@ async function gmailRun(): Promise<AgentRunResult> {
         triage.results
           .map(
             (r) =>
-              `${r.inboxName} ${r.junk} junk/${r.moved} moved/${r.review} review` +
-              (r.trashUnavailable ? ' (no Trash folder found — nothing moved)' : '') +
+              `${r.inboxName} ${r.trashed} trash/${r.quarantined} quarantine/${r.protectedCount} protected` +
+              (r.purged ? `, ${r.purged} released from quarantine` : '') +
+              (r.trashUnavailable ? ' (no Trash folder found)' : '') +
+              (r.quarantineUnavailable ? ' (Quarantine folder unavailable)' : '') +
               (r.error ? ` ERROR ${r.error.slice(0, 60)}` : ''),
           )
           .join(', ');

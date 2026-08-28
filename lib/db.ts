@@ -366,12 +366,16 @@ CREATE TABLE IF NOT EXISTS mail_triage_log (
   from_address TEXT NOT NULL,
   subject TEXT NOT NULL,
   verdict TEXT NOT NULL,
+  confidence INTEGER NOT NULL DEFAULT 0,
   reason TEXT NOT NULL,
   moved INTEGER NOT NULL,
   mode TEXT NOT NULL,
+  message_id TEXT,
+  purged_at TEXT,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mail_triage_log_created ON mail_triage_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mail_triage_log_purge ON mail_triage_log (verdict, moved, purged_at, created_at);
 CREATE TABLE IF NOT EXISTS brain_health (
   id TEXT PRIMARY KEY,
   pending_actions INTEGER NOT NULL,
@@ -487,6 +491,26 @@ function migrateWorkflowsTable(db: InstanceType<typeof Database>): void {
   }
 }
 
+// Same-day rewrite (2026-08-28): the "Zero-Scan, High-Confidence
+// Quarantine" model added a confidence score and the Message-ID tracking
+// the 14-day quarantine-expiry sweep needs (UIDs don't survive an IMAP
+// move — Message-ID does). A pre-rewrite row (that one night's dry-run
+// testing, before this table had any real reader) backfills confidence to
+// 0 and message_id/purged_at to NULL — honest defaults, not real values.
+function migrateMailTriageLogTable(db: InstanceType<typeof Database>): void {
+  const columns = new Set((db.pragma('table_info(mail_triage_log)') as { name: string }[]).map((c) => c.name));
+  if (columns.size === 0) return;
+  if (!columns.has('confidence')) {
+    safeAlter(db, 'ALTER TABLE mail_triage_log ADD COLUMN confidence INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!columns.has('message_id')) {
+    safeAlter(db, 'ALTER TABLE mail_triage_log ADD COLUMN message_id TEXT');
+  }
+  if (!columns.has('purged_at')) {
+    safeAlter(db, 'ALTER TABLE mail_triage_log ADD COLUMN purged_at TEXT');
+  }
+}
+
 // Runs recorded before 2026-08-21 lack push_failed — the column that keeps a
 // genuinely failed Chief of Staff ntfy push from being reported as full
 // success (see lib/analytics.ts's runOutcomeCounts). DEFAULT 0 backfills
@@ -561,6 +585,7 @@ export function openDb(path: string) {
   migrateBrainHealthTable(db);
   migrateAgentRunsTable(db);
   migrateWorkflowsTable(db);
+  migrateMailTriageLogTable(db);
 
   /** Shared purge guard: drop every row whose id is not in the seed's list
       (empty list = drop all — avoids invalid `NOT IN ()` SQL). */
@@ -1457,15 +1482,37 @@ export function openDb(path: string) {
   };
 
   /** Gmail Worker's junk-triage audit trail — see MailTriageLogSchema. Insert
-   * is append-only (no update/delete): the whole point is an unedited record
-   * of what the triage pass actually decided, in dry_run or live mode. */
+   * is append-only (no update/delete of the classification itself); the only
+   * mutation ever made to an existing row is markPurged, closing out a
+   * quarantine row once the 14-day sweep has resolved it one way or the
+   * other. The whole point is an unedited record of what the triage pass
+   * actually decided, in dry_run or live mode. */
+  function rowToMailTriageLog(r: any): MailTriageLog {
+    return MailTriageLogSchema.parse({
+      id: r.id,
+      inboxId: r.inbox_id,
+      inboxName: r.inbox_name,
+      uid: r.uid,
+      fromAddress: r.from_address,
+      subject: r.subject,
+      verdict: r.verdict,
+      confidence: r.confidence,
+      reason: r.reason,
+      moved: Boolean(r.moved),
+      mode: r.mode,
+      messageId: r.message_id ?? null,
+      purgedAt: r.purged_at ?? null,
+      createdAt: r.created_at,
+    });
+  }
+
   const mailTriageLog = {
     insert(entry: MailTriageLog): void {
       MailTriageLogSchema.parse(entry);
       db.prepare(
         `INSERT INTO mail_triage_log
-          (id, inbox_id, inbox_name, uid, from_address, subject, verdict, reason, moved, mode, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, inbox_id, inbox_name, uid, from_address, subject, verdict, confidence, reason, moved, mode, message_id, purged_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         entry.id,
         entry.inboxId,
@@ -1474,32 +1521,39 @@ export function openDb(path: string) {
         entry.fromAddress,
         entry.subject,
         entry.verdict,
+        entry.confidence,
         entry.reason,
         entry.moved ? 1 : 0,
         entry.mode,
+        entry.messageId,
+        entry.purgedAt,
         entry.createdAt,
       );
     },
     recent(limit: number): MailTriageLog[] {
       return (
+        db.prepare('SELECT * FROM mail_triage_log ORDER BY created_at DESC, rowid DESC LIMIT ?').all(limit) as any[]
+      ).map(rowToMailTriageLog);
+    },
+    /** Quarantine rows still awaiting the expiry sweep, past `olderThanIso`,
+     * oldest first (process the longest-waiting ones first) — the query the
+     * 14-day purge sweep runs. Scoped to a single inbox since the sweep runs
+     * per-inbox against a live IMAP connection. */
+    dueForPurge(inboxId: string, olderThanIso: string, limit: number): MailTriageLog[] {
+      return (
         db
-          .prepare('SELECT * FROM mail_triage_log ORDER BY created_at DESC, rowid DESC LIMIT ?')
-          .all(limit) as any[]
-      ).map((r) =>
-        MailTriageLogSchema.parse({
-          id: r.id,
-          inboxId: r.inbox_id,
-          inboxName: r.inbox_name,
-          uid: r.uid,
-          fromAddress: r.from_address,
-          subject: r.subject,
-          verdict: r.verdict,
-          reason: r.reason,
-          moved: Boolean(r.moved),
-          mode: r.mode,
-          createdAt: r.created_at,
-        }),
-      );
+          .prepare(
+            `SELECT * FROM mail_triage_log
+             WHERE inbox_id = ? AND verdict = 'quarantine' AND moved = 1 AND purged_at IS NULL AND created_at <= ?
+             ORDER BY created_at ASC LIMIT ?`,
+          )
+          .all(inboxId, olderThanIso, limit) as any[]
+      ).map(rowToMailTriageLog);
+    },
+    /** Marks a quarantine row resolved by the expiry sweep — released to
+     * Trash, or found already gone. Idempotent no-op if already marked. */
+    markPurged(id: string, purgedAt: string): void {
+      db.prepare('UPDATE mail_triage_log SET purged_at = ? WHERE id = ? AND purged_at IS NULL').run(purgedAt, id);
     },
   };
 

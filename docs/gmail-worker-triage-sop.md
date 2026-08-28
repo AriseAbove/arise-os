@@ -1,78 +1,134 @@
-# Gmail Worker — Triage + Junk Removal SOP (approved 2026-08-28)
+# Gmail Worker — Junk Triage SOP: "Zero-Scan, High-Confidence Quarantine"
 
-Approved by Sean Davis via a Claude/Cowork session, 2026-08-28. This is the
-spec `lib/mail-triage.ts` (classifier) and `lib/connectors/email-triage.ts`
-(IMAP runner) implement — see those files for the actual code and
-`lib/seed.ts`'s `sop-gmail-worker` entry for what `/sops` shows.
+Originally approved by Sean Davis via a Claude/Cowork session, 2026-08-28.
+Rewritten the same day, after the dry-run stage's first real results, to
+Sean's "Zero-Scan, High-Confidence Quarantine" model below — this document
+replaces the original three-bucket (junk/review/not_junk) spec entirely.
+This is the spec `lib/mail-triage.ts` (classifier) and
+`lib/connectors/email-triage.ts` (IMAP runner) implement — see those files
+for the actual code and `lib/seed.ts`'s `sop-gmail-worker` entry for what
+`/sops` shows.
+
+## Why this exists
+
+Sean's own framing: a structured, deterministic procedure — not an LLM
+"improvising" case by case — is what keeps this agent's error rate down.
+Nothing in this pipeline is an LLM judgment call. Every verdict comes from
+a fixed set of rules and a fixed point value per signal; the same message
+produces the same verdict every single time, and that logic is exactly
+what's written below and in `lib/mail-triage.ts`.
 
 ## Inboxes in scope
 
-- Phase 1 & 2: AAC mailbox (`INBOX_1` / `inbox-1`)
-- Phase 3: `seanadavis0@gmail.com` (`INBOX_2` / `inbox-2`),
-  `1solutionsgroup1@gmail.com` (`INBOX_3` / `inbox-3`)
+- AAC mailbox (`INBOX_1` / `inbox-1`)
+- `seanadavis0@gmail.com` (`INBOX_2` / `inbox-2`)
+- `1solutionsgroup1@gmail.com` (`INBOX_3` / `inbox-3`)
 
-## Rollout & execution safeguards
+`MAIL_TRIAGE_LIVE_INBOXES` scopes which of these may actually move mail in
+`live` mode, independent of which inboxes are scanned/classified/logged —
+see Rollout below.
 
-1. **Dry-run stage** — 3 days on the AAC mailbox with zero physical moves;
-   every verdict logged to `mail_triage_log` for human review
-   (`MAIL_TRIAGE_MODE=dry_run`).
-2. **AAC live stage** — turn on active trashing on the AAC mailbox, capped at
-   20 items/cycle (`MAIL_TRIAGE_MODE=live`, `MAIL_TRIAGE_LIVE_INBOXES=inbox-1`).
-3. **Personal accounts expansion** — activate `inbox-2` and `inbox-3` under
-   the same 20-item/cycle cap once the AAC live stage has been reviewed
-   (drop or widen `MAIL_TRIAGE_LIVE_INBOXES`).
+## The model
+
+Every unread message is either fast-pathed (bypasses scoring entirely) or
+scored 0-100 for junk-confidence, then bucketed:
+
+| Confidence | Verdict | Action (live mode) |
+|---|---|---|
+| >= 95% | **Trash** | Moved straight to Trash, capped at `MAIL_TRIAGE_MAX_MOVES`/run (default 20) |
+| 60-94% | **Quarantine** | Moved to a "Quarantine" mailbox (created automatically), capped at `MAIL_TRIAGE_MAX_QUARANTINE`/run (default 50). No alert, no ping — silent. |
+| < 60% | **Protected** | Left exactly where it is, in the inbox |
+
+**Fast-path safety (checked first, always wins, never scored):** a known
+CRM/funnel contact, an existing conversation thread, a starred message, a
+message with an attachment, or a subject mentioning a client/project
+keyword (203k, permit, draw schedule, estimate, invoice, walkthrough,
+contract, change order, punch list, proposal) bypasses junk scoring
+entirely — these signals are never even evaluated.
+
+### Confidence scoring (deterministic — see `lib/mail-triage.ts::junkConfidence`)
+
+| Signal | Score |
+|---|---|
+| Mail host's own spam flag set (`X-Spam-Flag: YES`) | 97 (Trash) |
+| Subject matches the high-precision scam-phrase list | 96 (Trash) |
+| `List-Unsubscribe` header present, no prior contact | 75 (Quarantine) |
+| None of the above | 0 (Protected) |
+
+The scam-phrase list (`lib/mail-triage.ts`'s `SCAM_KEYWORDS`) is
+deliberately narrow — phrases with very low legitimate-use rates only
+("wire transfer immediately", "you have won", "verify your account
+immediately", etc.) — never generic marketing language, since a false
+match here trashes a real email outright.
+
+## Quarantine expiry — the silent safety net
+
+A message that lands in Quarantine and is never rescued releases itself to
+**Trash** (never a permanent/expunge delete) after
+`MAIL_TRIAGE_QUARANTINE_DAYS` (default 14). This is Sean's own design:
+
+> I will no longer review daily digests. The quarantine folder will serve
+> as a silent safety net if a missing email is ever brought up.
+
+Practical effect: nothing pings Sean about what's in Quarantine, ever. If a
+client ever says "did you get my email?", the Quarantine folder (viewable
+directly in Gmail, any time, within the 14-day window) is the place to
+check before anything's gone for good. After 14 days it moves to Trash,
+where Gmail's own 30-day Trash retention is the last word — this codebase
+never expunges a message itself, in Quarantine or in Trash.
+
+The expiry sweep matches by the message's Message-ID header, not IMAP
+UID — a UID is only valid within the mailbox that issued it, and the same
+message gets an entirely new UID the moment it's moved into Quarantine. A
+row with no recorded Message-ID, or a Trash-move that fails, stays pending
+and is retried on the next run rather than silently dropped.
 
 ## Workflow
 
-1. Poll each configured IMAP inbox for unread counts and recent mail.
+1. Poll each configured IMAP inbox for unread counts and recent mail
+   (existing behavior, unchanged).
 2. Report per-inbox connection errors immediately (existing behavior,
    unchanged).
-3. **Fast-path exclusion check** — evaluate exclusion criteria first. If
-   matched, mark **not_junk** immediately.
-4. **Junk check** — if zero exclusions match, evaluate junk criteria.
-5. **Classify & act**:
-   - **not_junk** — feed into the unified `/comms` timeline.
-   - **junk** — move to Trash only if in `live` mode, the inbox is in scope,
-     a real `\Trash`-flagged mailbox was found, and the per-run cap hasn't
-     been hit.
-   - **review** (no exclusion, no confident junk signal) — leave in the
-     inbox untouched.
-6. Log every message evaluated — sender, subject, inbox, timestamp, matched
-   rule, action taken — to `mail_triage_log` (append-only).
+3. **Fast-path check** — evaluate the five bypass criteria first. Any match
+   -> **Protected**, scoring never runs.
+4. **Score** — compute junk-confidence for everything else.
+5. **Bucket & act** (live mode only; `dry_run` classifies and logs but
+   never moves anything):
+   - `>= 95` -> move to Trash, capped per run.
+   - `60-94` -> move to Quarantine (created on first use), capped per run,
+     silently.
+   - `< 60` -> leave in the inbox.
+6. **Quarantine expiry sweep** (live mode only) — release anything past
+   `MAIL_TRIAGE_QUARANTINE_DAYS` to Trash, matched by Message-ID.
+7. Log every message evaluated — sender, subject, inbox, confidence,
+   verdict, whether it moved, timestamp — to `mail_triage_log`
+   (append-only). Sean does not review this table routinely by design; it
+   exists as the real, unedited history.
 
-## Criteria & safety controls
+## Non-negotiable circuit breakers
 
-### Exclusion criteria (evaluated first — never move)
+- **Never a permanent delete** — Trash only, at every stage (initial junk
+  move and quarantine expiry alike). Gmail's own 30-day Trash retention is
+  the final word; this codebase never expunges a message itself.
+- **Batch rate limits** — `MAIL_TRIAGE_MAX_MOVES` (Trash, default 20) and
+  `MAIL_TRIAGE_MAX_QUARANTINE` (Quarantine moves and quarantine-expiry
+  releases, sharing one cap, default 50) per run.
+- **Real folders only** — Trash is found via the IMAP `\Trash` special-use
+  flag, never a guessed name. Quarantine is created via IMAP `CREATE` on
+  first use (idempotent — a second run finds the existing folder rather
+  than erroring). If either folder can't be reached, the affected verdicts
+  are still classified and logged, but nothing moves.
+- **Scoped rollout** — `MAIL_TRIAGE_LIVE_INBOXES` restricts which inboxes
+  may actually move mail in live mode.
+- **No alerts, ever** — nothing in this pipeline pushes a notification,
+  digest, or ping about a triage decision. The Quarantine folder itself is
+  the safety net.
+- **Deterministic, not an LLM judgment** — every score comes from a fixed
+  point value on a specific signal (see the table above). No model
+  "decides" anything on this path.
 
-- Sender already known (a funnel/CRM contact with this email)
-- Part of an existing thread (envelope `In-Reply-To` present)
-- Starred/flagged by a person
-- Has an attachment
-- Subject mentions a client/project keyword (203k, permit, draw, estimate,
-  invoice, walkthrough, contract, change order, punch list, proposal)
+## What's NOT in scope
 
-### Junk criteria (needs ≥1 match, and zero exclusions)
-
-- Mail host's own spam flag is set (`X-Spam-Flag: YES`)
-- Subject matches a known scam phrase (high-precision list only — see
-  `lib/mail-triage.ts`'s `SCAM_KEYWORDS`)
-- `List-Unsubscribe` header present with no prior thread/known-sender match
-
-### Non-negotiable circuit breakers
-
-- **Trash only** — never a permanent delete; Gmail's 30-day recovery window
-  applies.
-- **Batch rate limit** — `MAIL_TRIAGE_MAX_MOVES` per run (default 20).
-- **Real folder only** — if no `\Trash`-flagged mailbox is found, junk is
-  still classified and logged, but nothing moves (`trashUnavailable: true`
-  on the result) rather than guessing a folder name.
-- **Scoped rollout** — `MAIL_TRIAGE_LIVE_INBOXES` restricts which inboxes may
-  actually move mail in live mode, independent of which inboxes are being
-  scanned/classified.
-- **Ambiguous → review, never junk** — a message matching neither list is
-  left alone.
-
-## What's NOT in scope (yet)
-
-No auto-reply, no auto-archiving of non-junk mail, no priority tagging. This
-SOP covers exactly one new behavior: junk detection and move-to-Trash.
+No auto-reply, no priority tagging, no LLM review of ambiguous mail. This
+SOP covers exactly one behavior: confidence-scored junk triage with a
+timed, silent quarantine safety net.

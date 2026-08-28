@@ -249,17 +249,21 @@ const sopTasks: SopTask[] = [
   {
     id: 'sop-gmail-worker', departmentId: 'dept-comms', assigneeKind: 'agent', assigneeId: 'gmail-worker',
     title: 'Triage the inboxes',
-    summary: 'Up to four IMAP inboxes, honest unread counts, junk moved to Trash where enabled.',
+    summary: 'Up to four IMAP inboxes, honest unread counts, junk quarantined or trashed by confidence — silently.',
     steps: [
       'Poll each configured IMAP inbox for unread counts and recent mail',
       'Report per-inbox errors instead of hiding a dead connection',
       'Feed recent messages into the unified comms timeline',
-      // Junk triage is OFF by default (MAIL_TRIAGE_MODE unset) — the four
+      // Junk triage is OFF by default (MAIL_TRIAGE_MODE unset) — the three
       // steps above are the only thing that runs until Sean turns it on.
-      'When junk triage is enabled: classify each unread message as junk, review, or not junk — a known contact, an existing thread, a starred message, an attachment, or a client/project keyword always wins and is never touched',
-      'In dry_run mode: log every verdict for review, move nothing',
-      'In live mode: move only confirmed junk to that inbox\'s real Trash folder, capped per run, and only for inboxes explicitly enabled — never a permanent delete, never a guessed folder',
-      'Log every triage decision — moved or not — to an audit trail Sean can read',
+      // "Zero-Scan, High-Confidence Quarantine" model (2026-08-28, Sean's
+      // spec) — deterministic confidence scoring, never an LLM judgment:
+      'Fast-path safety first: a known contact, an existing thread, a starred message, an attachment, or a client/project keyword bypasses junk scoring entirely and is never touched',
+      'Score everything else for junk-confidence. >=95% -> junk. 60-94% -> ambiguous. <60% -> left alone',
+      'In dry_run mode: log every verdict, move nothing',
+      'In live mode: >=95% confidence moves to Trash (capped per run); 60-94% moves to a Quarantine folder, silently, no alert; under 60% passes straight to the inbox untouched — never a permanent delete, never a guessed folder',
+      'Quarantined mail with no other action releases itself to Trash after 14 days — the Quarantine folder is the safety net, checked in Gmail directly if a missing email is ever brought up, not a daily digest',
+      'Log every triage decision to an audit trail, whether or not anyone reviews it day to day',
     ],
   },
   {
@@ -561,7 +565,7 @@ const skills: Omit<Skill, 'markdown'>[] = [
 
 /** Bump when the seed content changes shape — existing DBs re-seed once to
  *  pick up the new baseline (and purge retired rows). */
-export const SEED_VERSION = '2026-08-28-gmail-worker-triage-sop';
+export const SEED_VERSION = '2026-08-28-gmail-worker-quarantine-sop';
 
 export function seedDatabase(db: FounderDb): void {
   // The whole reseed runs as ONE SQLite transaction, not ~100 separate
