@@ -1317,6 +1317,40 @@ pre-wired to any one machine.
   `MAIL_EXTRACTION_ENABLED` is set `true` and at least one message has run
   through the pipeline; empty state reads "no drafts waiting for review."
 - Credentials go in `.env.local` (gitignored). NEVER commit keys.
+- **Production outage: every page 500ing, root cause a migration-ordering bug
+  in `lib/db.ts` (2026-08-28 fix).** Right after `MAIL_EXTRACTION_ENABLED` was
+  set `true` in Railway (triggering a rebuild+redeploy of the exact same
+  commit already live), the entire site started throwing `Application
+  error: a server-side exception has occurred` on literally every page —
+  `/`, `/integrations`, `/comms`, all of it, same error digest. `/api/keys`
+  (the one route that reads only `process.env`, no DB) kept working, which
+  narrowed it to `getDb()`. Railway's Deploy Logs showed the real error:
+  `SqliteError: no such column: purged_at`. Root cause: `openDb()`'s single
+  `db.exec(DDL)` call included `CREATE INDEX ... ON mail_triage_log (...,
+  purged_at, ...)`, but that statement ran *before*
+  `migrateMailTriageLogTable()` — the function that actually `ALTER TABLE`s
+  `purged_at` onto a `mail_triage_log` table created before the quarantine-
+  expiry rewrite added that column. On the production volume's real (pre-
+  rewrite-shaped) table, the DDL's `CREATE INDEX` statement itself threw,
+  aborting the whole `db.exec()` before the migration ever got a chance to
+  run — and since `lib/data.ts`'s `getDb()` only caches its module-level
+  singleton on a successful return, every single subsequent request re-ran
+  (and re-failed) the same `openDb()` call. Not caused by the extraction
+  flag itself, and not data loss or corruption — flipping that env var just
+  happened to be the trigger for the next cold boot to hit an ordering bug
+  that had been latent since the quarantine-expiry columns were added. A
+  fresh `:memory:` DB (what every test in this repo uses) never exercises
+  this path: its `CREATE TABLE` already includes `purged_at` from a clean
+  slate, so the migration is a no-op and the index creation trivially
+  succeeds — this is why 1372 passing tests never caught it. Fix: moved the
+  `idx_mail_triage_log_purge` index creation to run *after*
+  `migrateMailTriageLogTable()` instead of inside the initial DDL block.
+  Regression test: `tests/mail-triage-log-legacy-table.test.ts` — builds a
+  real on-disk DB with the pre-rewrite `mail_triage_log` shape (no
+  confidence/message_id/purged_at) and asserts `openDb()` no longer throws
+  and both the migrated columns and the index end up present. Immediate
+  production recovery: verify via Railway Deploy Logs / a live page load
+  that the fix restored service once deployed.
 
 ## Views
 

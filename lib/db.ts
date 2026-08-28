@@ -379,7 +379,6 @@ CREATE TABLE IF NOT EXISTS mail_triage_log (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mail_triage_log_created ON mail_triage_log (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_mail_triage_log_purge ON mail_triage_log (verdict, moved, purged_at, created_at);
 CREATE TABLE IF NOT EXISTS mail_extractions (
   id TEXT PRIMARY KEY,
   message_id TEXT NOT NULL UNIQUE,
@@ -612,6 +611,20 @@ export function openDb(path: string) {
   migrateAgentRunsTable(db);
   migrateWorkflowsTable(db);
   migrateMailTriageLogTable(db);
+  // Deliberately created AFTER the migration above, not inside the initial
+  // DDL block: a production mail_triage_log table that predates the
+  // purged_at column (added same-day as the quarantine-expiry rewrite,
+  // 2026-08-28) doesn't get that column until migrateMailTriageLogTable's
+  // ALTER runs. Indexing purged_at inside the DDL's single db.exec() call —
+  // which runs BEFORE any migrate*Table() function — threw `SqliteError: no
+  // such column: purged_at` on exactly that legacy table shape, which
+  // aborted the whole exec() and left `instance` unset in lib/data.ts's
+  // getDb(), so EVERY subsequent request re-threw the same error trying to
+  // open the db again — a site-wide outage (see the 2026-08-28 CLAUDE.md
+  // entry for the incident). A fresh ':memory:' test db never hits this: its
+  // CREATE TABLE already includes purged_at, so the migration is a no-op and
+  // the ordering bug never gets exercised.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_mail_triage_log_purge ON mail_triage_log (verdict, moved, purged_at, created_at)');
 
   /** Shared purge guard: drop every row whose id is not in the seed's list
       (empty list = drop all — avoids invalid `NOT IN ()` SQL). */
