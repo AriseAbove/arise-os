@@ -249,7 +249,7 @@ const sopTasks: SopTask[] = [
   {
     id: 'sop-gmail-worker', departmentId: 'dept-comms', assigneeKind: 'agent', assigneeId: 'gmail-worker',
     title: 'Triage the inboxes',
-    summary: 'Up to four IMAP inboxes, honest unread counts, junk quarantined or trashed by confidence — silently.',
+    summary: 'Up to four IMAP inboxes, honest unread counts, junk quarantined or trashed by confidence — silently. Protected mail can be extracted and drafted for human approval.',
     steps: [
       'Poll each configured IMAP inbox for unread counts and recent mail',
       'Report per-inbox errors instead of hiding a dead connection',
@@ -264,6 +264,12 @@ const sopTasks: SopTask[] = [
       'In live mode: >=95% confidence moves to Trash (capped per run); 60-94% moves to a Quarantine folder, silently, no alert; under 60% passes straight to the inbox untouched — never a permanent delete, never a guessed folder',
       'Quarantined mail with no other action releases itself to Trash after 14 days — the Quarantine folder is the safety net, checked in Gmail directly if a missing email is ever brought up, not a daily digest',
       'Log every triage decision to an audit trail, whether or not anyone reviews it day to day',
+      // Post-triage extraction + drafting (2026-08-29) — OFF by default
+      // (MAIL_EXTRACTION_ENABLED unset), and only ever runs on 'protected'
+      // mail. Deterministic, same as the junk scorer — no LLM involved:
+      'When extraction is enabled: for every protected message, parse intent, project address, dollar amount, draw #, and invoice # with fixed patterns — a field that cannot be confidently parsed is recorded as not found, never guessed',
+      'Generate a short executive summary and a proposed reply for each extraction, referencing only fields that were actually found',
+      'Never send a generated reply automatically — every draft sits pending until a human approves, edits, or rejects it via the /comms approval action',
     ],
   },
   {
@@ -565,7 +571,7 @@ const skills: Omit<Skill, 'markdown'>[] = [
 
 /** Bump when the seed content changes shape — existing DBs re-seed once to
  *  pick up the new baseline (and purge retired rows). */
-export const SEED_VERSION = '2026-08-28-gmail-worker-quarantine-sop';
+export const SEED_VERSION = '2026-08-29-gmail-worker-extraction-drafts-sop';
 
 export function seedDatabase(db: FounderDb): void {
   // The whole reseed runs as ONE SQLite transaction, not ~100 separate
