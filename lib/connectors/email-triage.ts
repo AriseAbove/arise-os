@@ -37,6 +37,8 @@
 import type { ImapFlow } from 'imapflow';
 import { imapClientOptions, parseInboxConfigs, type InboxConfig } from '@/lib/connectors/email';
 import { classifyForTriage, type MailTriageVerdict } from '@/lib/mail-triage';
+import { extractMailData } from '@/lib/mail-extraction';
+import { generateMailDraft } from '@/lib/mail-drafts';
 import { getDb } from '@/lib/data';
 import type { MailTriageLog } from '@/lib/schemas';
 
@@ -91,6 +93,81 @@ export function parseTriageConfig(env: Record<string, string | undefined>): Tria
   return { mode, maxTrashPerRun, maxQuarantinePerRun, quarantineDays, liveInboxIds };
 }
 
+/** Off by default, same as every other new agent capability in this repo —
+ * an operator has to opt in explicitly rather than a deploy silently
+ * turning it on. Only meaningful while triage itself is running (mode !==
+ * 'off'), since extraction only ever looks at messages the same scan
+ * already classified 'protected'. */
+export function extractionEnabled(env: Record<string, string | undefined>): boolean {
+  return (env.MAIL_EXTRACTION_ENABLED ?? '').trim().toLowerCase() === 'true';
+}
+
+type BodyStructureNode = {
+  type?: string;
+  disposition?: string | null;
+  part?: string;
+  childNodes?: BodyStructureNode[];
+};
+
+/** Finds the IMAP part number of the first text/plain part, falling back to
+ * the first text/html part. `undefined` means "download the whole message"
+ * — correct for a simple single-part plain-text message, which is the
+ * common case for real client email. Best-effort, not a full MIME walker:
+ * a miss here just means extraction runs against a slightly noisier body
+ * (e.g. HTML markup remaining), never a crash — extractMailData's patterns
+ * are already written to tolerate stray non-matching text. */
+function findTextPart(structure: unknown): string | undefined {
+  let htmlPart: string | undefined;
+  function walk(node: unknown): string | undefined {
+    if (!node || typeof node !== 'object') return undefined;
+    const n = node as BodyStructureNode;
+    const type = (n.type ?? '').toLowerCase();
+    if (type === 'text/plain' && n.part) return n.part;
+    if (type === 'text/html' && n.part && !htmlPart) htmlPart = n.part;
+    if (Array.isArray(n.childNodes)) {
+      for (const child of n.childNodes) {
+        const found = walk(child);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  }
+  return walk(structure) ?? htmlPart;
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Best-effort plain-text body for extraction only — never used for the
+ * junk-triage verdict itself, which already ran before this is called.
+ * Any failure here (a download error, an unreadable structure) degrades to
+ * an empty string rather than throwing, so a body-fetch problem never fails
+ * the message's classification or the rest of the run — extraction on an
+ * empty body just honestly returns all-null fields. */
+async function fetchPlainTextBody(client: ImapFlow, uid: number, structure: unknown): Promise<string> {
+  try {
+    const part = findTextPart(structure);
+    const download = await client.download(uid, part, { uid: true, maxBytes: 200_000 });
+    const chunks: Buffer[] = [];
+    for await (const chunk of download.content as AsyncIterable<Buffer>) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const raw = Buffer.concat(chunks).toString('utf8');
+    const contentType = (download.meta?.contentType ?? '').toLowerCase();
+    return contentType.includes('html') ? stripHtml(raw) : raw;
+  } catch {
+    return '';
+  }
+}
+
 export type TriageMessageOutcome = {
   uid: number;
   fromAddress: string;
@@ -109,6 +186,10 @@ export type TriageInboxResult = {
   trashed: number;
   quarantined: number;
   protectedCount: number;
+  /** 'protected' messages that also got a structured extraction + draft
+   * generated this run (only when MAIL_EXTRACTION_ENABLED=true and the
+   * message had a usable Message-ID) — 0 whenever extraction is off. */
+  extracted: number;
   /** Quarantine rows the expiry sweep resolved this run (released to Trash,
    * or found already gone) — 0 whenever nothing was due yet. */
   purged: number;
@@ -233,6 +314,7 @@ export async function triageInbox(
   triageCfg: TriageEnvConfig,
   knownSenders: ReadonlySet<string>,
   ImapFlowCtor: typeof ImapFlow,
+  extractionOn = false,
 ): Promise<TriageInboxResult> {
   const result: TriageInboxResult = {
     inboxId: config.id,
@@ -241,6 +323,7 @@ export async function triageInbox(
     trashed: 0,
     quarantined: 0,
     protectedCount: 0,
+    extracted: 0,
     purged: 0,
     trashUnavailable: false,
     quarantineUnavailable: false,
@@ -322,6 +405,28 @@ export async function triageInbox(
           }
         } else {
           result.protectedCount++;
+          // Post-triage extraction + draft generation — 'protected' mail
+          // only, and only ever a read: nothing in this branch moves the
+          // message or sends anything. A messageId is required to key the
+          // extraction/draft rows and to let /comms join them back onto the
+          // right CommsItem; a message with no Message-ID header is skipped
+          // rather than keyed on something unstable. Wrapped so a body-fetch
+          // or extraction failure never fails the message's classification
+          // (already recorded above) or the rest of the run — same
+          // "primary job first" discipline as the rest of this pipeline.
+          if (extractionOn && messageId) {
+            try {
+              const bodyText = await fetchPlainTextBody(client, uid, msg.bodyStructure);
+              const extraction = extractMailData({ messageId, inboxId: config.id, subject, bodyText });
+              getDb().mailExtractions.insert(extraction);
+              const draft = generateMailDraft({ messageId, extraction, subject, fromName: from?.name }, extraction.id);
+              getDb().mailDrafts.insert(draft);
+              result.extracted++;
+            } catch {
+              // Left un-extracted; the triage verdict above already stands
+              // and is unaffected.
+            }
+          }
         }
 
         result.outcomes.push({
@@ -387,8 +492,9 @@ export async function triageAllInboxes(
 
   const { ImapFlow: RealImapFlow } = await import('imapflow');
   const knownSenders = knownContactSenders();
+  const extractionOn = extractionEnabled(env);
   const results = await Promise.all(
-    inboxes.map((cfg) => triageInbox(cfg, triageCfg, knownSenders, RealImapFlow)),
+    inboxes.map((cfg) => triageInbox(cfg, triageCfg, knownSenders, RealImapFlow, extractionOn)),
   );
 
   const db = getDb();

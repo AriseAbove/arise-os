@@ -243,6 +243,57 @@ export const MailTriageLogSchema = z.object({
 });
 export type MailTriageLog = z.infer<typeof MailTriageLogSchema>;
 
+// Gmail Worker's post-triage structured extraction + drafting (2026-08-28).
+// Runs only on messages lib/mail-triage.ts already classified 'protected' —
+// this never touches, and never re-decides, the junk verdict itself.
+//
+// lib/mail-extraction.ts is a deterministic, regex/pattern-based parser —
+// deliberately NOT LLM-backed, same reasoning as the junk classifier itself
+// (Sean's own standing rule: a fixed, auditable procedure beats a model that
+// can improvise). A field the parser can't match with real confidence comes
+// back `null`; it is never guessed, defaulted to 0, or filled with an empty
+// string standing in for "unknown". A `null` renders as "Not found" in the
+// UI, not as a blank that looks like a real answer.
+export const MailIntentSchema = z.enum(['lead', 'permit_inspection', 'sub_bid', 'bank_draw', 'client_update', 'general']);
+export type MailIntent = z.infer<typeof MailIntentSchema>;
+
+export const MailExtractionSchema = z.object({
+  id: z.string().min(1),
+  messageId: z.string().min(1),
+  inboxId: z.string().min(1),
+  intent: MailIntentSchema,
+  projectAddress: z.string().nullable(),
+  dollarAmount: z.number().nullable(),
+  drawNumber: z.number().int().nullable(),
+  invoiceNumber: z.string().nullable(),
+  /** 0-100. Unlike the junk classifier's fixed point table, this reflects
+   * how many of the deterministic patterns below actually matched — not a
+   * model's self-reported confidence. */
+  confidence: z.number().int().min(0).max(100),
+  extractedAt: z.string().min(1),
+});
+export type MailExtraction = z.infer<typeof MailExtractionSchema>;
+
+// A generated executive summary + reply draft for one extracted message.
+// Strict human-in-the-loop: nothing here reaches sendEmailReply() until a
+// person taps Approve (or Edit & Send) in /comms — there is no auto-send
+// path, by design, for anything that talks to a real client.
+export const MailDraftStatusSchema = z.enum(['pending', 'approved', 'edited', 'rejected']);
+export type MailDraftStatus = z.infer<typeof MailDraftStatusSchema>;
+
+export const MailDraftSchema = z.object({
+  id: z.string().min(1),
+  messageId: z.string().min(1),
+  extractionId: z.string().min(1),
+  /** 2-3 sentence plain-language breakdown for the /comms card. */
+  executiveSummary: z.string().min(1),
+  proposedReplyText: z.string().min(1),
+  status: MailDraftStatusSchema,
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+export type MailDraft = z.infer<typeof MailDraftSchema>;
+
 export const BroadcastReplySchema = z.object({
   id: z.string().min(1),
   broadcastId: z.string().min(1),

@@ -1215,6 +1215,64 @@ pre-wired to any one machine.
   in production under either version of this feature, and enabling it
   needs its own separate, explicit go-ahead regardless of which model is
   merged.
+- **Gmail Worker gains post-triage structured extraction + drafted replies,
+  off by default (2026-08-29).** After the Quarantine rewrite above, Sean's
+  next ask — filtered through a second round with Gemini producing a
+  ground-truth technical spec, reviewed and adjusted before implementation —
+  was to extend the Gmail Worker past triage into extracting structured data
+  from real client mail and drafting a reply for one-tap approval. Two new
+  modules, both running exclusively on messages `lib/mail-triage.ts` already
+  classified `protected` (they never touch, or re-decide, the junk verdict):
+  `lib/mail-extraction.ts` (intent + project address + dollar amount + draw
+  # + invoice #, via fixed regex/keyword patterns — deliberately NOT
+  LLM-backed, same reasoning Sean gave for the junk classifier itself: a
+  fixed procedure beats a model that can improvise) and `lib/mail-drafts.ts`
+  (a templated executive summary + proposed reply built only from fields
+  the extractor actually found — a `null` field is stated as "not found,"
+  never silently omitted or guessed). Both gated by
+  `MAIL_EXTRACTION_ENABLED` (off unless explicitly set `true`).
+  `MailExtractionSchema`/`MailDraftSchema` (`lib/schemas.ts`) and two new
+  tables (`mail_extractions`, `mail_drafts`, `lib/db.ts`'s `mailExtractions`/
+  `mailDrafts` repos, matching `mailTriageLog`'s repo-object pattern rather
+  than free functions) persist the results, upserted by `message_id`
+  (unlike `mail_triage_log`'s append-only audit trail, an extraction/draft
+  is a pure re-derivable function of the message content, so a re-run
+  overwrites rather than duplicating — and a draft only overwrites while
+  still `pending`, never after a human has already resolved it).
+  `lib/connectors/email-triage.ts`'s `triageInbox` calls both, wrapped so a
+  body-fetch or extraction failure never fails the message's already-logged
+  triage verdict or the rest of the run; the plain-text body fetch
+  (`fetchPlainTextBody`) is a best-effort MIME reader (finds the first
+  text/plain part via `bodyStructure`, falls back to text/html with tags
+  stripped, falls back to the whole message) — not a full MIME parser, and
+  documented as such, since `extractMailData`'s patterns are written to
+  tolerate a noisier body rather than needing a perfect one.
+  **Strict human-in-the-loop, no exceptions:** every draft is created
+  `pending`; the only path to `approved`/`edited`/`rejected` — and the only
+  place `sendEmailReply` is ever called on agent-generated text — is the
+  new `POST /api/comms/approve-draft` route, gated on an explicit action
+  from a real person. That route deliberately does NOT trust a
+  client-supplied recipient address: it looks up the real sender via the
+  new `db.mailTriageLog.byMessageId()` (every message triage evaluates,
+  `protected` included, already has a logged `fromAddress`/`inboxId`/
+  `subject` row keyed by Message-ID), so a send always goes to the address
+  triage itself already verified, never wherever a request body claims.
+  A send failure leaves the draft `pending` rather than marking it resolved
+  for a message that never actually went out; a second approval attempt on
+  an already-resolved draft 409s rather than silently double-sending.
+  Tests: `tests/mail-extraction.test.ts` (deterministic parsing, including
+  two adversarial false-positive cases — a run-on sentence with a number
+  and an unrelated street-suffix word, and a bare number never mistaken for
+  a dollar amount without a `$`), `tests/mail-drafts.test.ts` (summary/reply
+  never reference a field that wasn't found), `tests/comms-approve-draft-
+  route.test.ts` (approve/reject/edit_and_send, the no-auto-send guardrail,
+  send-failure-keeps-pending, double-resolve 409, unknown-draft 404).
+  `lib/seed.ts`'s `sop-gmail-worker` entry and
+  `docs/gmail-worker-triage-sop.md` both updated to describe this honestly;
+  `SEED_VERSION` bumped to `2026-08-29-gmail-worker-extraction-drafts-sop`.
+  **Not live anywhere yet** — same no-push-access handoff as the two Gmail
+  Worker changes above; this lands as a PR for Sean to review and merge,
+  and `MAIL_EXTRACTION_ENABLED` has never been set in production.
 - Credentials go in `.env.local` (gitignored). NEVER commit keys.
 
 ## Views

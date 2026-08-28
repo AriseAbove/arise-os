@@ -96,6 +96,12 @@ export const KEY_SLOTS: KeySlot[] = [
     group: 'Mail Triage',
     hint: 'comma-separated inbox ids (e.g. inbox-1) — unset means every configured inbox',
   },
+  {
+    envVar: 'MAIL_EXTRACTION_ENABLED',
+    label: 'Mail extraction + drafts enabled',
+    group: 'Mail Triage',
+    hint: 'true/false — deterministic post-triage extraction + draft generation for protected mail, off by default. See lib/mail-extraction.ts',
+  },
 ];
 
 export function maskSecret(value: string): string {

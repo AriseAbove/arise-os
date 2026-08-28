@@ -12,6 +12,8 @@ import {
   DepartmentSchema,
   DomainSchema,
   MailTriageLogSchema,
+  MailExtractionSchema,
+  MailDraftSchema,
   MetricSchema,
   PersonaSchema,
   PhaseSchema,
@@ -45,6 +47,8 @@ import {
   type Department,
   type Domain,
   type MailTriageLog,
+  type MailExtraction,
+  type MailDraft,
   type Metric,
   type Persona,
   type Phase,
@@ -376,6 +380,28 @@ CREATE TABLE IF NOT EXISTS mail_triage_log (
 );
 CREATE INDEX IF NOT EXISTS idx_mail_triage_log_created ON mail_triage_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mail_triage_log_purge ON mail_triage_log (verdict, moved, purged_at, created_at);
+CREATE TABLE IF NOT EXISTS mail_extractions (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL UNIQUE,
+  inbox_id TEXT NOT NULL,
+  intent TEXT NOT NULL,
+  project_address TEXT,
+  dollar_amount REAL,
+  draw_number INTEGER,
+  invoice_number TEXT,
+  confidence INTEGER NOT NULL,
+  extracted_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mail_drafts (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL UNIQUE,
+  extraction_id TEXT NOT NULL,
+  executive_summary TEXT NOT NULL,
+  proposed_reply_text TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS brain_health (
   id TEXT PRIMARY KEY,
   pending_actions INTEGER NOT NULL,
@@ -1535,6 +1561,18 @@ export function openDb(path: string) {
         db.prepare('SELECT * FROM mail_triage_log ORDER BY created_at DESC, rowid DESC LIMIT ?').all(limit) as any[]
       ).map(rowToMailTriageLog);
     },
+    /** The real fromAddress/inboxId/subject for a message, keyed by
+     * Message-ID — every message triage ever looks at gets a row here
+     * (including 'protected' verdicts), so this is the one durable, honest
+     * source for "who do I actually reply to" behind the approve-draft
+     * route, rather than trusting a client-supplied address. Most recent
+     * row wins if a Message-ID somehow appears more than once. */
+    byMessageId(messageId: string): MailTriageLog | null {
+      const row = db
+        .prepare('SELECT * FROM mail_triage_log WHERE message_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1')
+        .get(messageId) as any;
+      return row ? rowToMailTriageLog(row) : null;
+    },
     /** Quarantine rows still awaiting the expiry sweep, past `olderThanIso`,
      * oldest first (process the longest-waiting ones first) — the query the
      * 14-day purge sweep runs. Scoped to a single inbox since the sweep runs
@@ -1554,6 +1592,132 @@ export function openDb(path: string) {
      * Trash, or found already gone. Idempotent no-op if already marked. */
     markPurged(id: string, purgedAt: string): void {
       db.prepare('UPDATE mail_triage_log SET purged_at = ? WHERE id = ? AND purged_at IS NULL').run(purgedAt, id);
+    },
+  };
+
+  /** Gmail Worker's post-triage structured extraction — see
+   * MailExtractionSchema. One row per 'protected' message actually run
+   * through lib/mail-extraction.ts; insert is idempotent by message_id
+   * (a re-run of the same message overwrites rather than duplicating, since
+   * message_id is UNIQUE and extraction is a pure re-derivable function of
+   * the message content — unlike mail_triage_log, this isn't an append-only
+   * audit trail). */
+  function rowToMailExtraction(r: any): MailExtraction {
+    return MailExtractionSchema.parse({
+      id: r.id,
+      messageId: r.message_id,
+      inboxId: r.inbox_id,
+      intent: r.intent,
+      projectAddress: r.project_address ?? null,
+      dollarAmount: r.dollar_amount ?? null,
+      drawNumber: r.draw_number ?? null,
+      invoiceNumber: r.invoice_number ?? null,
+      confidence: r.confidence,
+      extractedAt: r.extracted_at,
+    });
+  }
+
+  const mailExtractions = {
+    insert(entry: MailExtraction): void {
+      MailExtractionSchema.parse(entry);
+      db.prepare(
+        `INSERT INTO mail_extractions
+          (id, message_id, inbox_id, intent, project_address, dollar_amount, draw_number, invoice_number, confidence, extracted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(message_id) DO UPDATE SET
+           id = excluded.id, inbox_id = excluded.inbox_id, intent = excluded.intent,
+           project_address = excluded.project_address, dollar_amount = excluded.dollar_amount,
+           draw_number = excluded.draw_number, invoice_number = excluded.invoice_number,
+           confidence = excluded.confidence, extracted_at = excluded.extracted_at`,
+      ).run(
+        entry.id,
+        entry.messageId,
+        entry.inboxId,
+        entry.intent,
+        entry.projectAddress,
+        entry.dollarAmount,
+        entry.drawNumber,
+        entry.invoiceNumber,
+        entry.confidence,
+        entry.extractedAt,
+      );
+    },
+    byMessageId(messageId: string): MailExtraction | null {
+      const row = db.prepare('SELECT * FROM mail_extractions WHERE message_id = ?').get(messageId) as any;
+      return row ? rowToMailExtraction(row) : null;
+    },
+    byId(id: string): MailExtraction | null {
+      const row = db.prepare('SELECT * FROM mail_extractions WHERE id = ?').get(id) as any;
+      return row ? rowToMailExtraction(row) : null;
+    },
+  };
+
+  /** Executive summary + proposed reply for one extracted message — see
+   * MailDraftSchema. Strict human-in-the-loop: created 'pending' and only
+   * ever moved to 'approved'/'edited'/'rejected' by
+   * POST /api/comms/approve-draft, never automatically. */
+  function rowToMailDraft(r: any): MailDraft {
+    return MailDraftSchema.parse({
+      id: r.id,
+      messageId: r.message_id,
+      extractionId: r.extraction_id,
+      executiveSummary: r.executive_summary,
+      proposedReplyText: r.proposed_reply_text,
+      status: r.status,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    });
+  }
+
+  const mailDrafts = {
+    insert(entry: MailDraft): void {
+      MailDraftSchema.parse(entry);
+      db.prepare(
+        `INSERT INTO mail_drafts
+          (id, message_id, extraction_id, executive_summary, proposed_reply_text, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(message_id) DO UPDATE SET
+           id = excluded.id, extraction_id = excluded.extraction_id,
+           executive_summary = excluded.executive_summary, proposed_reply_text = excluded.proposed_reply_text,
+           updated_at = excluded.updated_at
+         WHERE mail_drafts.status = 'pending'`,
+      ).run(
+        entry.id,
+        entry.messageId,
+        entry.extractionId,
+        entry.executiveSummary,
+        entry.proposedReplyText,
+        entry.status,
+        entry.createdAt,
+        entry.updatedAt,
+      );
+    },
+    byMessageId(messageId: string): MailDraft | null {
+      const row = db.prepare('SELECT * FROM mail_drafts WHERE message_id = ?').get(messageId) as any;
+      return row ? rowToMailDraft(row) : null;
+    },
+    byId(id: string): MailDraft | null {
+      const row = db.prepare('SELECT * FROM mail_drafts WHERE id = ?').get(id) as any;
+      return row ? rowToMailDraft(row) : null;
+    },
+    /** The only way a draft's status ever changes — called exclusively from
+     * POST /api/comms/approve-draft after a real human tap. `editedText`
+     * overwrites the proposed reply only when provided (an EDIT_AND_SEND
+     * action); approve/reject leave the original draft text intact for the
+     * record. No-op (0 rows) if the draft is no longer 'pending' — an
+     * already-resolved draft can't be resolved a second time. */
+    updateStatus(id: string, status: 'approved' | 'edited' | 'rejected', updatedAt: string, editedText?: string): void {
+      if (editedText !== undefined) {
+        db.prepare(
+          "UPDATE mail_drafts SET status = ?, proposed_reply_text = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
+        ).run(status, editedText, updatedAt, id);
+      } else {
+        db.prepare("UPDATE mail_drafts SET status = ?, updated_at = ? WHERE id = ? AND status = 'pending'").run(
+          status,
+          updatedAt,
+          id,
+        );
+      }
     },
   };
 
@@ -1691,6 +1855,8 @@ export function openDb(path: string) {
     voiceQueue,
     pushQueue,
     mailTriageLog,
+    mailExtractions,
+    mailDrafts,
     people,
     sopTasks,
     workflows,

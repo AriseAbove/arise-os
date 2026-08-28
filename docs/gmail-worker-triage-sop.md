@@ -127,8 +127,39 @@ and is retried on the next run rather than silently dropped.
   point value on a specific signal (see the table above). No model
   "decides" anything on this path.
 
+## Post-triage extraction + drafting (added 2026-08-29)
+
+A second, separate stage layered on top of the triage above — never
+touching, and never re-deciding, the junk verdict itself. Off by default
+(`MAIL_EXTRACTION_ENABLED` unset). When enabled, it runs once per message,
+only on messages this same pass already classified `protected`:
+
+- `lib/mail-extraction.ts` parses intent (lead / permit_inspection /
+  sub_bid / bank_draw / client_update / general), project address, dollar
+  amount, draw #, and invoice # using fixed regex/keyword patterns — the
+  same "deterministic, not an LLM judgment" discipline as the junk scorer
+  above. A field the patterns can't confidently match comes back `null`
+  and is rendered as "not found," never guessed, never defaulted to 0 or
+  a blank string standing in for "unknown."
+- `lib/mail-drafts.ts` builds a short executive summary and a proposed
+  reply from those extracted fields — templated, not free-text generated,
+  and it only ever references a field that was actually found.
+- Both are logged to `mail_extractions`/`mail_drafts` (see
+  `MailExtractionSchema`/`MailDraftSchema` in `lib/schemas.ts`).
+- **Strict human-in-the-loop, no exceptions:** every draft is created in
+  `pending` status. The only way a draft moves to `approved`/`edited`/
+  `rejected` — and the only way `sendEmailReply` is ever called on
+  agent-generated text — is a real person hitting
+  `POST /api/comms/approve-draft`. There is no auto-send path at any
+  confidence level.
+- The reply-to address and subject used when sending are looked up
+  server-side from `mail_triage_log` (keyed by Message-ID) — the real,
+  triage-verified sender for that message — never taken from the request
+  body, so a caller can't redirect a send to an arbitrary address.
+
 ## What's NOT in scope
 
-No auto-reply, no priority tagging, no LLM review of ambiguous mail. This
-SOP covers exactly one behavior: confidence-scored junk triage with a
-timed, silent quarantine safety net.
+No LLM review of ambiguous mail anywhere in this pipeline — the junk
+scorer and the extraction/drafting stage above are both fully
+deterministic. No auto-send at any confidence level; a drafted reply is
+always one explicit human approval away from actually going out.
