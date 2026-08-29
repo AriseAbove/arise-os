@@ -1,0 +1,91 @@
+name: Database backup
+
+# Nightly snapshot of the production SQLite database, stored as a
+# compressed file on a dedicated `db-backups` branch in this same repo —
+# a zero-cost, no-new-account alternative to Railway's paid volume-backup
+# feature (Backups/PITR require the Pro plan; this project is on Hobby,
+# and upgrading purely for that was judged not worth the recurring cost at
+# this stage, 2026-08-29 — see CLAUDE.md's changelog). GitHub Actions has
+# no access to the Railway volume directly, so this calls the deployed
+# app's own export route instead of reading the file off disk.
+#
+# Repo secrets required (Settings → Secrets and variables → Actions):
+#   ARISE_OS_URL          — e.g. https://your-app.up.railway.app (no trailing slash)
+#   BACKUP_EXPORT_SECRET  — must match BACKUP_EXPORT_SECRET in the app's own environment
+#
+# To restore: download the dated founder-os-YYYY-MM-DD.db.gz file from the
+# db-backups branch, `gunzip` it, and either point FOUNDER_OS_DB at the
+# resulting .db file or copy it over the Railway volume's file directly via
+# the Console tab.
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # ~4-5am Eastern — low traffic
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check required secrets
+        run: |
+          if [ -z "${ARISE_OS_URL}" ] || [ -z "${BACKUP_EXPORT_SECRET}" ]; then
+            echo "ARISE_OS_URL and/or BACKUP_EXPORT_SECRET repo secret not set — skipping." >&2
+            exit 1
+          fi
+        env:
+          ARISE_OS_URL: ${{ secrets.ARISE_OS_URL }}
+          BACKUP_EXPORT_SECRET: ${{ secrets.BACKUP_EXPORT_SECRET }}
+
+      - name: Fetch a fresh backup from the live app
+        run: |
+          FILE="founder-os-$(date -u +%F).db.gz"
+          curl --fail --show-error --silent \
+            -X GET "${ARISE_OS_URL}/api/backup/export" \
+            -H "Authorization: Bearer ${BACKUP_EXPORT_SECRET}" \
+            -o "${FILE}"
+          echo "FILE=${FILE}" >> "$GITHUB_ENV"
+        env:
+          ARISE_OS_URL: ${{ secrets.ARISE_OS_URL }}
+          BACKUP_EXPORT_SECRET: ${{ secrets.BACKUP_EXPORT_SECRET }}
+
+      - name: Commit the backup to the db-backups branch
+        run: |
+          git config user.name "arise-os-backup-bot"
+          git config user.email "actions@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin db-backups > /dev/null 2>&1; then
+            git fetch origin db-backups:db-backups
+            git checkout db-backups
+          else
+            git checkout --orphan db-backups
+            git rm -rf . --ignore-unmatch > /dev/null
+          fi
+
+          mkdir -p backups
+          mv "${FILE}" "backups/${FILE}"
+
+          # Keep 90 days of daily snapshots. Prune by the date encoded in
+          # the filename, not file mtime — every file's mtime resets to
+          # "now" on each checkout, so an mtime-based prune would delete
+          # everything (or nothing) depending on checkout order rather than
+          # actual backup age.
+          CUTOFF=$(date -u -d '90 days ago' +%Y-%m-%d)
+          for f in backups/founder-os-*.db.gz; do
+            [ -e "$f" ] || continue
+            fdate=$(basename "$f" | sed -E 's/founder-os-([0-9-]+)\.db\.gz/\1/')
+            if [[ "$fdate" < "$CUTOFF" ]]; then
+              rm -f "$f"
+            fi
+          done
+
+          git add backups
+          git commit -m "Backup ${FILE}" || echo "Nothing new to commit"
+          git push origin db-backups

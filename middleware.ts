@@ -33,6 +33,12 @@ import type { NextRequest } from 'next/server';
 // CRON_SECRET bearer gate the route itself enforces, so this prefix bypass
 // is still just "let the route's own auth run", not a hole.
 //
+// `/api/backup` (2026-08-29) is the same machine-caller shape as
+// `/api/cron`: the nightly `db-backup.yml` GitHub Actions workflow calls
+// `/api/backup/export` with a `Bearer BACKUP_EXPORT_SECRET` header, which
+// the route itself verifies — this bypass just lets that bearer auth run
+// instead of the interactive Basic Auth wall rejecting it as "not Basic".
+//
 // `/track` is different in kind from the rest of this list: it's not a
 // machine caller with its own bearer secret, it's the public client-facing
 // job tracker (2026-08-27, "keep the customer in the loop") — a homeowner
@@ -43,7 +49,14 @@ import type { NextRequest } from 'next/server';
 // specific link", the same trust model as e.g. a Google Calendar share link.
 // Never add a route under this prefix that reads or writes anything beyond
 // one contact's own client-visible progress.
-const BYPASS_PREFIXES = ['/api/cron', '/api/voice/queue', '/api/aac-brain', '/api/push/relay', '/track'];
+const BYPASS_PREFIXES = [
+  '/api/cron',
+  '/api/voice/queue',
+  '/api/aac-brain',
+  '/api/push/relay',
+  '/api/backup',
+  '/track',
+];
 
 // Forwards the request pathname as a header so app/layout.tsx's server
 // component (no access to next/navigation's usePathname — that's client-only)
