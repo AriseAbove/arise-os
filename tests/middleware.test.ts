@@ -82,6 +82,13 @@ describe('middleware — the app-wide Basic Auth wall', () => {
     expect(res.status).not.toBe(401);
   });
 
+  test('never gates the DB backup export route — db-backup.yml authenticates via BACKUP_EXPORT_SECRET, not Basic Auth', () => {
+    process.env.APP_BASIC_AUTH_USER = 'sean';
+    process.env.APP_BASIC_AUTH_PASS = 'correct-horse';
+    const res = middleware(req('/api/backup/export'));
+    expect(res.status).not.toBe(401);
+  });
+
   test('never gates the public client tracker — a homeowner has no APP_BASIC_AUTH_USER/PASS; the token in the URL is its own auth', () => {
     process.env.APP_BASIC_AUTH_USER = 'sean';
     process.env.APP_BASIC_AUTH_PASS = 'correct-horse';

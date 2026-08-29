@@ -52,6 +52,12 @@ export const KEY_SLOTS: KeySlot[] = [
     hint: 'optional — defaults to https://ntfy.sh; set only when self-hosting',
   },
   {
+    envVar: 'BACKUP_EXPORT_SECRET',
+    label: 'DB backup export secret',
+    group: 'Backups',
+    hint: 'long random string — must match the same value as a GitHub Actions repo secret; see .github/workflows/db-backup.yml',
+  },
+  {
     envVar: 'TRACK_TOKEN_SECRET',
     label: 'Tracker token secret',
     group: 'Client Tracker',

@@ -25,9 +25,17 @@ export function resetDbForTests(): void {
   instance = null;
 }
 
+/** The on-disk path getDb() resolves FOUNDER_OS_DB to — same fallback logic,
+ * pulled out so a caller that needs the real file path (app/api/backup/
+ * export/route.ts's DB export) doesn't duplicate it or risk drifting out of
+ * sync with what getDb() actually opened. */
+export function currentDbPath(): string {
+  return process.env.FOUNDER_OS_DB ?? path.join(process.cwd(), 'data', 'founder-os.db');
+}
+
 export function getDb(): FounderDb {
   if (instance) return instance;
-  const dbPath = process.env.FOUNDER_OS_DB ?? path.join(process.cwd(), 'data', 'founder-os.db');
+  const dbPath = currentDbPath();
   if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   instance = openDb(dbPath);
   // Seed on first touch, and re-seed ONCE whenever the seed baseline version

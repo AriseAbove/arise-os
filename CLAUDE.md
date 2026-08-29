@@ -1351,6 +1351,58 @@ pre-wired to any one machine.
   and both the migrated columns and the index end up present. Immediate
   production recovery: verify via Railway Deploy Logs / a live page load
   that the fix restored service once deployed.
+- **Zero-cost database backups, since Railway's own Backups/PITR require
+  the Pro plan (2026-08-29).** Three independent AI reviews of this system
+  (Gemini, Perplexity — see the review-brief work from 2026-08-19) all
+  flagged the same real gap: the SQLite database is one file on one
+  Railway volume with no second copy anywhere. Checking Railway's own
+  Backups tab confirmed daily/weekly/monthly volume backups exist as a
+  feature, but are gated behind the Pro plan (this project is on Hobby).
+  Sean's call, discussed directly: the recurring cost of upgrading the
+  whole plan wasn't worth it just for backups when a free alternative
+  covers the same real risk (total loss of the one database file — every
+  lead, job, invoice, communication log, and QuickBooks OAuth token) at
+  effectively zero incremental cost. Built instead:
+  - `app/api/backup/export/route.ts` — a new machine-facing route, same
+    bearer-secret pattern as every other machine caller in this repo
+    (`CRON_SECRET`/`VOICE_RELAY_SECRET`/`PUSH_RELAY_SECRET`/
+    `AAC_BRAIN_SECRET`), gated by the new `BACKUP_EXPORT_SECRET`. Opens a
+    **separate, readonly** `better-sqlite3` connection to the live database
+    and calls its `.backup()` method (SQLite's own online backup API) to a
+    tmp file, gzips it, and streams it back — safe to run against the live
+    database under WAL mode (unlike a raw `fs.copyFile`, which can catch a
+    mid-write torn page), and can never itself hold a lock the live app is
+    waiting on since it never touches the `getDb()` singleton.
+  - `lib/data.ts` gained `currentDbPath()` — the same `FOUNDER_OS_DB`
+    fallback logic `getDb()` already used, pulled out so the export route
+    doesn't duplicate (and risk drifting from) that resolution.
+  - `.github/workflows/db-backup.yml` — a new scheduled workflow (daily,
+    ~4-5am Eastern, plus `workflow_dispatch` for a manual run) that calls
+    the export route and commits the dated `.db.gz` file to a dedicated
+    `db-backups` branch in this same repo — no new account, no new service,
+    just a place Sean already has access to. Prunes anything older than 90
+    days, matched by the date encoded in the filename rather than file
+    mtime (mtime resets to checkout time on every run, which would prune
+    everything or nothing depending on checkout order rather than actual
+    backup age).
+  - New env var `BACKUP_EXPORT_SECRET` (`.env.example`, `lib/keys.ts` under
+    a new "Backups" group) — must be set to the same value in both the
+    app's own environment and as a GitHub Actions repo secret, same as
+    `CRON_SECRET`.
+  - `middleware.ts`'s `BYPASS_PREFIXES` gained `/api/backup` — same
+    reasoning as the other machine-caller bypasses (the route's own bearer
+    check runs instead of the interactive Basic Auth wall).
+  **To restore:** download the dated file from the `db-backups` branch,
+  `gunzip` it, and either point `FOUNDER_OS_DB` at the resulting `.db` file
+  or copy it over the Railway volume's file directly via the Console tab.
+  **Still needs, before this actually runs nightly:** `BACKUP_EXPORT_SECRET`
+  set in both Railway's variables and as a GitHub Actions repo secret
+  (alongside the already-configured `ARISE_OS_URL`), and this PR merged —
+  built and tested in a clone by a Claude/Cowork session with no push
+  access to this repo, same handoff constraint as every prior fix in this
+  log. Tests: `tests/backup-export-route.test.ts` (bearer gating, the
+  `:memory:` no-op case, and a real round-trip — writes real rows, exports,
+  gunzips, and reopens the result to confirm the rows survived).
 
 ## Views
 
