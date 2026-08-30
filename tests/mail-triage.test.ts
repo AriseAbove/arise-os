@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest';
-import { classifyForTriage, junkConfidence, TRASH_THRESHOLD, QUARANTINE_THRESHOLD, type TriageInput } from '@/lib/mail-triage';
+import {
+  classifyForTriage,
+  junkConfidence,
+  isTrustedDomain,
+  TRASH_THRESHOLD,
+  QUARANTINE_THRESHOLD,
+  type TriageInput,
+} from '@/lib/mail-triage';
 
 const base: TriageInput = {
   fromAddress: 'someone@example.com',
@@ -51,6 +58,70 @@ describe('classifyForTriage — fast-path safety always wins, bypasses scoring e
     });
     expect(result.verdict).toBe('protected');
     expect(result.reason).toMatch(/estimate|203k/);
+  });
+
+  // Found via a real day of production dry-run data (2026-08-29): these
+  // three domains were getting quarantined by the bare List-Unsubscribe
+  // signal even though none of their mail is ever junk — a client
+  // walkthrough notice, a signed SOW reminder, a 1099-NEC tax form (all
+  // via the business's own WordPress-routed domain), 124 Allo missed-
+  // call/lead alerts, and this app's own uptime monitoring pings.
+  test('the business\'s own domain is protected, even with a List-Unsubscribe header', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'info@ariseaboveconstruction.com',
+      hasListUnsubscribe: true,
+      subject: 'Message from Contact',
+    });
+    expect(result.verdict).toBe('protected');
+    expect(result.reason).toMatch(/trusted/);
+  });
+
+  test('Allo (the AI receptionist) is protected — its alerts are the lead pipeline, not junk', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'call@withallo.com',
+      hasListUnsubscribe: true,
+      subject: 'Missed call from (310) 626-0837 on Arise Above Construction',
+    });
+    expect(result.verdict).toBe('protected');
+  });
+
+  test('healthchecks.io (uptime monitoring) is protected', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'healthchecks.io@healthchecks.io',
+      hasListUnsubscribe: true,
+      subject: 'DOWN | aac-asc-monitor',
+    });
+    expect(result.verdict).toBe('protected');
+  });
+
+  test('a trusted domain still wins outright even with a host spam flag set', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'wordpress@ariseaboveconstruction.com',
+      hostSpamFlag: true,
+    });
+    expect(result.verdict).toBe('protected');
+  });
+});
+
+describe('isTrustedDomain', () => {
+  test('matches the exact registered domain and any subdomain of it', () => {
+    expect(isTrustedDomain('info@ariseaboveconstruction.com')).toBe(true);
+    expect(isTrustedDomain('call@withallo.com')).toBe(true);
+    expect(isTrustedDomain('healthchecks.io@healthchecks.io')).toBe(true);
+    expect(isTrustedDomain('alerts@notifications.withallo.com')).toBe(true);
+  });
+
+  test('does not match an unrelated domain, including a look-alike suffix', () => {
+    expect(isTrustedDomain('someone@example.com')).toBe(false);
+    expect(isTrustedDomain('someone@notwithallo.com')).toBe(false);
+  });
+
+  test('handles a malformed address without an @ safely', () => {
+    expect(isTrustedDomain('not-an-email')).toBe(false);
   });
 });
 

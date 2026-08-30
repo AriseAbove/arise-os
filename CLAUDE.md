@@ -1395,14 +1395,53 @@ pre-wired to any one machine.
   **To restore:** download the dated file from the `db-backups` branch,
   `gunzip` it, and either point `FOUNDER_OS_DB` at the resulting `.db` file
   or copy it over the Railway volume's file directly via the Console tab.
-  **Still needs, before this actually runs nightly:** `BACKUP_EXPORT_SECRET`
-  set in both Railway's variables and as a GitHub Actions repo secret
-  (alongside the already-configured `ARISE_OS_URL`), and this PR merged —
-  built and tested in a clone by a Claude/Cowork session with no push
-  access to this repo, same handoff constraint as every prior fix in this
-  log. Tests: `tests/backup-export-route.test.ts` (bearer gating, the
-  `:memory:` no-op case, and a real round-trip — writes real rows, exports,
-  gunzips, and reopens the result to confirm the rows survived).
+  Tests: `tests/backup-export-route.test.ts` (bearer gating, the `:memory:`
+  no-op case, and a real round-trip — writes real rows, exports, gunzips,
+  and reopens the result to confirm the rows survived).
+  **Update 2026-08-29/30:** merged (PR #6) and fully live — `BACKUP_EXPORT_SECRET`
+  is set in both Railway and as a GitHub Actions repo secret, and a manual
+  `workflow_dispatch` run was used to confirm the whole path end to end: it
+  hit the live app, pulled a real gzip snapshot, and committed
+  `backups/founder-os-2026-08-29.db.gz` to the `db-backups` branch. Runs on
+  its own nightly schedule from here with no further action needed.
+- **Gmail Worker's quarantine bucket was catching real business mail, not
+  just junk — found from a real day of dry-run data, fixed before ever
+  going live (2026-08-29/30).** Sean asked when junk triage (see the
+  "Zero-Scan, High-Confidence Quarantine" entry above) could go live.
+  Rather than guessing, pulled the actual `mail_triage_log` table out of
+  that morning's automated backup (the feature directly above) and queried
+  it — 11,309 real messages logged since the quarantine model shipped. The
+  10 `trash` verdicts were all genuine phishing (Best Buy gift-card scam
+  mail) — clean. But the `quarantine` bucket (`BULK_UNSUBSCRIBE_CONFIDENCE`,
+  triggered by any List-Unsubscribe header from a sender not already in the
+  CRM) was catching 574 of its 2,844 messages from three sources that are
+  never junk: the business's own domain (`info@`/`wordpress@`/
+  `recruiter@ariseaboveconstruction.com` — the WordPress site's contact-form
+  and job-application notifications, including a client walkthrough notice,
+  a signed BuildStrong SOW reminder, and a 1099-NEC tax form, all
+  misclassified in production), Allo the AI receptionist (`withallo.com` —
+  124 missed-call/call-answered alerts, i.e. the lead pipeline itself), and
+  this app's own uptime monitoring (`healthchecks.io`). Given the design
+  Sean approved — quarantine is a silent safety net he does not review
+  daily, and anything left unrescued auto-releases to Trash after 14 days —
+  this would have quietly aged out real leads and business documents with
+  no one watching. Fixed in `lib/mail-triage.ts`: a new
+  `TRUSTED_SENDER_DOMAINS` fast-path check (`isTrustedDomain`, matches the
+  three domains above and any subdomain) runs before scoring, same tier as
+  the existing known-contact/thread/starred/attachment/keyword exclusions —
+  a match wins outright, never scored at all. Re-running the fix against
+  the same real dry-run data confirms it: 574 of 2,844 previously-quarantined
+  messages now correctly classify as `protected`. `MAIL_TRIAGE_MODE` has
+  still never been set to `live` in production — this was caught during
+  dry-run specifically so it never had to be caught after real mail was
+  actually moved. Tests added to `tests/mail-triage.test.ts` covering all
+  three trusted domains (including one that still wins outright against a
+  host spam flag) plus `isTrustedDomain` itself (subdomain matching, a
+  look-alike domain that must NOT match, and a malformed address with no
+  `@`). **Still needs:** this branch has not been merged (same no-push-access
+  handoff as every fix in this log) — go live on `MAIL_TRIAGE_MODE` stays a
+  separate, explicit decision for Sean once he's seen another clean dry-run
+  pass with this fix in place.
 
 ## Views
 

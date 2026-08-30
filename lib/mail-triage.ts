@@ -92,6 +92,30 @@ const SCAM_KEYWORDS = [
   'verify your account immediately',
 ];
 
+/** Domains that must never be junk-scored, found from a real day of
+ * dry-run data (2026-08-29): the BULK_UNSUBSCRIBE_CONFIDENCE signal alone
+ * ("has a List-Unsubscribe header, sender isn't a known CRM contact") was
+ * quarantining genuinely important mail from these three sources, none of
+ * which is ever junk:
+ *   - the business's own domain — its WordPress site's contact-form and
+ *     job-application notifications (info@/wordpress@/recruiter@) route
+ *     through here and include real leads and document reminders (a client
+ *     walkthrough notice, a signed BuildStrong SOW reminder, a 1099-NEC tax
+ *     form all showed up misclassified in production)
+ *   - Allo, the AI receptionist — its missed-call and call-answered alerts
+ *     ARE the lead pipeline; one day of dry-run data caught 124 of these
+ *   - healthchecks.io — this app's own uptime monitoring for AAC's infra
+ * A domain match wins outright, same as every other fast-path exclusion —
+ * checked before scoring, never itself scored. */
+const TRUSTED_SENDER_DOMAINS = ['ariseaboveconstruction.com', 'withallo.com', 'healthchecks.io'];
+
+export function isTrustedDomain(fromAddress: string): boolean {
+  const at = fromAddress.lastIndexOf('@');
+  if (at === -1) return false;
+  const domain = fromAddress.slice(at + 1).toLowerCase();
+  return TRUSTED_SENDER_DOMAINS.some((trusted) => domain === trusted || domain.endsWith(`.${trusted}`));
+}
+
 /** Fixed point values per signal — the entire "confidence" story. Nothing
  * here is a guess or an average; each number is a deliberate policy choice
  * about how reliable that one signal is. Host-level spam flags and the
@@ -129,6 +153,9 @@ export function classifyForTriage(input: TriageInput): TriageVerdict {
   const fromLower = input.fromAddress.trim().toLowerCase();
 
   // --- Fast-path safety. Any one of these bypasses junk scoring entirely. ---
+  if (fromLower && isTrustedDomain(fromLower)) {
+    return { verdict: 'protected', confidence: 0, reason: 'trusted operational/business domain — bypasses triage entirely' };
+  }
   if (fromLower && input.knownSenders.has(fromLower)) {
     return { verdict: 'protected', confidence: 0, reason: 'known contact — bypasses triage entirely' };
   }
