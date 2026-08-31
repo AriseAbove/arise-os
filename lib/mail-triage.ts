@@ -131,6 +131,20 @@ const SCAM_KEYWORDS = [
  *   - adobesign.com — real e-signature platform Sean uses for contracts and
  *     warranties (e.g. a Greenlawn Cabinet Warranty awaiting signature);
  *     confirmed by Sean 2026-08-31
+ *   - formsubmit.co — the form-delivery backend for the AAC website itself
+ *     (its "Activate FormSubmit" notice names the site's own
+ *     aac-website-a0p.pages.dev domain), so its mail is inbound leads from
+ *     Sean's own contact form, not third-party marketing
+ *   - buildfh.com — chris@buildfh.com is a real, recurring business contact:
+ *     the log's older history shows calendar invites CC'd to
+ *     info@ariseaboveconstruction.com ("Property Walk Through for
+ *     Renovations with FH Construction"), a document share ("Navarre.docx"),
+ *     and forwarded property threads ("Fwd: 2468 Ford"). The 18 quarantined
+ *     messages are a repeating automated notice (subject "Hickory", another
+ *     property) from the same sender that happened to carry a
+ *     List-Unsubscribe header and no thread/attachment signal of its own —
+ *     same shape as qtbizsolutions.com, a real contact the existing
+ *     known-sender check can't catch on every message
  * A domain match wins outright, same as every other fast-path exclusion —
  * checked before scoring, never itself scored. */
 const TRUSTED_SENDER_DOMAINS = [
@@ -142,6 +156,8 @@ const TRUSTED_SENDER_DOMAINS = [
   'qtbizsolutions.com',
   'roofr.com',
   'adobesign.com',
+  'formsubmit.co',
+  'buildfh.com',
 ];
 
 export function isTrustedDomain(fromAddress: string): boolean {
