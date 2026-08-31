@@ -186,6 +186,34 @@ describe('classifyForTriage — fast-path safety always wins, bypasses scoring e
     });
     expect(result.verdict).toBe('quarantine');
   });
+
+  // Found in the same full census as Roofr/Adobe Sign, fixed as a small
+  // follow-up (2026-08-31): formsubmit.co is the AAC website's own
+  // contact-form delivery backend, not third-party mail.
+  test('FormSubmit (the AAC website\'s own contact-form backend) is protected', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'noreply@formsubmit.co',
+      hasListUnsubscribe: true,
+      subject: 'Action Required: Activate FormSubmit on https://aac-website-a0p.pages.dev/',
+    });
+    expect(result.verdict).toBe('protected');
+    expect(result.reason).toMatch(/trusted/);
+  });
+
+  // chris@buildfh.com is a real recurring contact (property walkthroughs,
+  // document shares, forwarded threads) whose automated notices don't
+  // always carry a thread/attachment signal of their own.
+  test('a real recurring contact (buildfh.com) is protected, even on an automated notice with no thread/attachment signal', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'chris@buildfh.com',
+      hasListUnsubscribe: true,
+      subject: 'Hickory',
+    });
+    expect(result.verdict).toBe('protected');
+    expect(result.reason).toMatch(/trusted/);
+  });
 });
 
 describe('isTrustedDomain', () => {
@@ -199,6 +227,8 @@ describe('isTrustedDomain', () => {
     expect(isTrustedDomain('briana.banks@qtbizsolutions.com')).toBe(true);
     expect(isTrustedDomain('noreply@roofr.com')).toBe(true);
     expect(isTrustedDomain('echosign@adobesign.com')).toBe(true);
+    expect(isTrustedDomain('noreply@formsubmit.co')).toBe(true);
+    expect(isTrustedDomain('chris@buildfh.com')).toBe(true);
   });
 
   test('does not match an unrelated domain, including a look-alike suffix', () => {

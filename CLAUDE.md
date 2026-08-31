@@ -1535,11 +1535,31 @@ pre-wired to any one machine.
   1391 tests passing, `tsc --noEmit` clean (`tests/mail-triage.test.ts`
   covers Roofr, Adobe Sign, the RRP keyword match, and the negative case —
   a different sender on the same shared ESP domain with unrelated content
-  stays in quarantine). **Still needs:** this branch has not been merged
-  (same no-push-access handoff as every fix in this log) — go live on
-  `MAIL_TRIAGE_MODE` remains Sean's separate, explicit decision. With the
-  full census done, the recommended next step is a clean dry-run pass with
-  all three rounds of fixes in place, then that go-live conversation.
+  stays in quarantine). **Update 2026-08-31:** merged (PR #9) and live —
+  Railway redeployed automatically. `MAIL_TRIAGE_MODE` still `dry_run`.
+- **Two more from the same census, shipped as a small follow-up
+  (2026-08-31).** The census turned up two more candidates —
+  `buildfh.com` and `formsubmit.co` — that got flagged as "fixing now" in
+  the moment but weren't actually in the PR #9 diff. Caught and corrected
+  same-day rather than left as a stale promise: `formsubmit.co` is the AAC
+  website's own contact-form delivery backend (its "Activate FormSubmit"
+  notice names the site's own `aac-website-a0p.pages.dev` domain — inbound
+  leads, not third-party mail), a confident domain-trust addition on its
+  own. `buildfh.com` needed a second look before its earlier "confident"
+  label was warranted: the census view showed only a bare quarantined
+  subject ("Hickory") with no context. Pulling that sender's full log
+  history showed `chris@buildfh.com` is a real, recurring contact — calendar
+  invites CC'd to info@ariseaboveconstruction.com for property walkthroughs,
+  a document share ("Navarre.docx"), forwarded property threads ("Fwd: 2468
+  Ford") — and the 18 quarantined messages are a repeating automated notice
+  from that same sender that happened to lack a thread/attachment signal of
+  its own, the same shape as the qtbizsolutions.com fix. Both added to
+  `TRUSTED_SENDER_DOMAINS` with tests. 1393 tests passing, `tsc --noEmit`
+  clean. **Still needs:** this branch has not been merged (same no-push-
+  access handoff as every fix in this log). With all four rounds in,
+  `MAIL_TRIAGE_MODE` remains Sean's separate, explicit decision — the
+  recommended next step is a clean dry-run pass with everything in place,
+  then that go-live conversation.
 
 ## Views
 
