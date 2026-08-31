@@ -105,6 +105,42 @@ describe('classifyForTriage — fast-path safety always wins, bypasses scoring e
     });
     expect(result.verdict).toBe('protected');
   });
+
+  // Found from a second round of real production dry-run data
+  // (2026-08-30/31), after the fix above shipped: three more sources hit
+  // the same bare List-Unsubscribe signal and were quarantining mail that's
+  // never junk — a security/identity stream, an active legal-service
+  // thread, and a real business contact with no funnel record of her own.
+  test('Intuit account/security notices are protected, even with a List-Unsubscribe header', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'do_not_reply@intuit.com',
+      hasListUnsubscribe: true,
+      subject: 'New Device Log In',
+    });
+    expect(result.verdict).toBe('protected');
+    expect(result.reason).toMatch(/trusted/);
+  });
+
+  test('LegalShield service-request correspondence is protected', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'noreply@legalshieldproviders.com',
+      hasListUnsubscribe: true,
+      subject: "You've missed a call",
+    });
+    expect(result.verdict).toBe('protected');
+  });
+
+  test('a real business contact with no funnel record (qtbizsolutions.com) is protected', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'briana.banks@qtbizsolutions.com',
+      hasListUnsubscribe: true,
+      subject: 'BuildStrong Detroit Business Plan Process',
+    });
+    expect(result.verdict).toBe('protected');
+  });
 });
 
 describe('isTrustedDomain', () => {
@@ -113,6 +149,9 @@ describe('isTrustedDomain', () => {
     expect(isTrustedDomain('call@withallo.com')).toBe(true);
     expect(isTrustedDomain('healthchecks.io@healthchecks.io')).toBe(true);
     expect(isTrustedDomain('alerts@notifications.withallo.com')).toBe(true);
+    expect(isTrustedDomain('do_not_reply@intuit.com')).toBe(true);
+    expect(isTrustedDomain('noreply@legalshieldproviders.com')).toBe(true);
+    expect(isTrustedDomain('briana.banks@qtbizsolutions.com')).toBe(true);
   });
 
   test('does not match an unrelated domain, including a look-alike suffix', () => {

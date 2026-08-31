@@ -1438,10 +1438,52 @@ pre-wired to any one machine.
   three trusted domains (including one that still wins outright against a
   host spam flag) plus `isTrustedDomain` itself (subdomain matching, a
   look-alike domain that must NOT match, and a malformed address with no
-  `@`). **Still needs:** this branch has not been merged (same no-push-access
-  handoff as every fix in this log) — go live on `MAIL_TRIAGE_MODE` stays a
-  separate, explicit decision for Sean once he's seen another clean dry-run
-  pass with this fix in place.
+  `@`). **Update 2026-08-30:** merged (PR #7) and live in production — Railway
+  redeployed automatically. `MAIL_TRIAGE_MODE` is still `dry_run`; go live
+  stays Sean's separate, explicit decision.
+- **Second round of quarantine false positives found and fixed — Intuit,
+  LegalShield, and a real contact with no CRM record (2026-08-30/31).**
+  Sean asked again whether triage was ready to go live. Rather than
+  assuming the first fix (above) was the whole picture, pulled a fresh
+  backup (via a manual `workflow_dispatch` of the backup workflow, so the
+  data reflected the PR #7 fix's real behavior in production, not the stale
+  pre-fix nightly snapshot) and re-checked. The fix confirmed clean for what
+  it targeted — 100% of `ariseaboveconstruction.com`/`withallo.com`/
+  `healthchecks.io` mail since deploy classified `protected`, and all 40
+  `trash` verdicts were still genuine phishing. But three more sources were
+  sitting in quarantine, never junk: `intuit.com` and its subdomains (the
+  identity/security stream for the QuickBooks account this business's books
+  run through — "New Device Log In," "A passkey was added to your Intuit
+  Account," "Your Intuit subscription was canceled" — a security alert
+  silently aging out to Trash after 14 days is a real risk, not just an
+  annoyance), `legalshieldproviders.com` (an active legal service-request
+  thread — "Prepare for your call," "You've missed a call" — not
+  marketing), and `qtbizsolutions.com` (Briana Banks, a real
+  business-development contact on the BuildStrong Detroit Business Plan
+  Process whose invites CC `info@ariseaboveconstruction.com` — she has no
+  funnel/CRM record of her own since she's a program contact, not a sales
+  lead, so the existing known-contact check could never catch her). Sean's
+  call, via AskUserQuestion: fix these too before going live, same as the
+  first round. Added all three to `lib/mail-triage.ts`'s
+  `TRUSTED_SENDER_DOMAINS` (six domains total now) — no change to the
+  mechanism, same fast-path tier as everything else. Re-running the fix
+  against the same real backup data confirms it: 328 previously-quarantined
+  messages (72 qtbizsolutions.com, 72 legalshieldproviders.com, 152 across
+  intuit.com and its four subdomains) now correctly classify as `protected`,
+  with the subdomain match catching `appcenter.`/`notifications.`/
+  `developerrelations.`/`dp.intuit.com` for free. Two more sources were
+  flagged as lower-stakes and left alone rather than added reflexively:
+  Michigan LARA licensing-board bulletins (code updates, informational, not
+  time-critical) and Michigan Builders License marketing mixed with one real
+  order confirmation (not security- or relationship-critical) — adding
+  every domain that ever shows up in quarantine would eventually swallow the
+  bucket's entire purpose. Tests added to `tests/mail-triage.test.ts` for
+  all three new domains plus `isTrustedDomain` coverage. 1387 tests passing,
+  `tsc --noEmit` clean. **Still needs:** this branch has not been merged
+  (same no-push-access handoff as every fix in this log) — go live on
+  `MAIL_TRIAGE_MODE` stays Sean's separate, explicit decision, and another
+  clean dry-run pass with this second fix in place is the recommended next
+  check before that conversation.
 
 ## Views
 
