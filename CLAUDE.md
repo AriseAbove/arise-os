@@ -1555,11 +1555,44 @@ pre-wired to any one machine.
   from that same sender that happened to lack a thread/attachment signal of
   its own, the same shape as the qtbizsolutions.com fix. Both added to
   `TRUSTED_SENDER_DOMAINS` with tests. 1393 tests passing, `tsc --noEmit`
-  clean. **Still needs:** this branch has not been merged (same no-push-
-  access handoff as every fix in this log). With all four rounds in,
+  clean. **Update 2026-08-31:** merged (PR #10) and live — Railway
+  redeployed automatically. With all four census rounds in,
   `MAIL_TRIAGE_MODE` remains Sean's separate, explicit decision — the
   recommended next step is a clean dry-run pass with everything in place,
   then that go-live conversation.
+- **Mail-triage cron outage, root cause and fix (2026-08-31).** Sean asked
+  to check on the every-30-minute triage cron; it had in fact been failing
+  every single business-hours cycle since 00:08 UTC that day, a Railway 502
+  after ~5 minutes on `gmail-worker`, confirmed live by re-triggering the
+  workflow and watching it fail the same way. Root cause was a real
+  architecture gap, not a fluke: `triageInbox` scans `\Unseen` mail every
+  run, but `dry_run` mode correctly never marks anything `\Seen` (that would
+  be a mailbox mutation dry_run explicitly promises never to make), and
+  `'protected'` verdicts never call `messageMove` either — so nothing
+  tracked "already classified" between runs. Every 30-minute cycle
+  re-fetched and re-scored the ENTIRE cumulative unseen backlog from
+  scratch, forever. Confirmed in the production backup: 72,057
+  `mail_triage_log` rows for only 3,787 distinct messages across the three
+  inboxes (~19x re-scanning), a cost that grew every day and finally
+  exceeded the host's timeout once `seanadavis0@` and `1solutionsgroup1@`
+  added their own backlogs to the same concurrent `triageAllInboxes` call —
+  taking down all three inboxes at once, not just the two new ones.
+  Fixed with a cheap bulk envelope pre-fetch (one IMAP round trip for every
+  candidate UID, not one per message) that checks each Message-ID against
+  `mail_triage_log` before paying for the expensive per-message `fetchOne`
+  — already-logged messages are skipped, only genuinely new mail gets
+  classified, and the mailbox itself is never touched, so `dry_run`'s
+  zero-mutation guarantee is unaffected. Added `MAIL_TRIAGE_MAX_SCAN_PER_RUN`
+  (default 300) as defense in depth against a future burst, and an index on
+  `mail_triage_log.message_id` since the dedup check now runs on every
+  candidate UID, every run, not just occasionally in the purge sweep. Two
+  new tests cover the dedup skip and the scan cap. 1395 tests passing,
+  `tsc --noEmit` clean. Verified against the same production backup that
+  surfaced the bug: the 19x ratio and the exact 00:08 UTC last-successful-
+  run timestamp are what this fix addresses. **Still needs:** this branch
+  has not been merged yet (same no-push-access handoff as every fix in this
+  log) — once merged, the next cron cycle should be checked to confirm it
+  actually completes rather than 502s again.
 
 ## Views
 
