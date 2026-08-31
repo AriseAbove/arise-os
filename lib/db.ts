@@ -625,6 +625,14 @@ export function openDb(path: string) {
   // CREATE TABLE already includes purged_at, so the migration is a no-op and
   // the ordering bug never gets exercised.
   db.exec('CREATE INDEX IF NOT EXISTS idx_mail_triage_log_purge ON mail_triage_log (verdict, moved, purged_at, created_at)');
+  // Added 2026-08-31 alongside the triage-run dedup fix: byMessageId() below
+  // is now called once per candidate UID on every scan (the fix for that
+  // day's outage), not just occasionally by the purge sweep — an unindexed
+  // scan over a 30k+-row table on every single message would just trade one
+  // performance cliff for another. Same "after the migration, not in the
+  // initial DDL" placement as idx_mail_triage_log_purge above, for the same
+  // legacy-table-shape reason.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_mail_triage_log_message_id ON mail_triage_log (message_id)');
 
   /** Shared purge guard: drop every row whose id is not in the seed's list
       (empty list = drop all — avoids invalid `NOT IN ()` SQL). */

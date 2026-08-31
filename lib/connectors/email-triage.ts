@@ -60,12 +60,20 @@ export type TriageEnvConfig = {
   /** null = every configured inbox may move mail in 'live' mode; otherwise
    * only inbox ids in this set (e.g. {'inbox-1'} for "AAC only, for now"). */
   liveInboxIds: Set<string> | null;
+  /** Cap on how many genuinely-new (not already in mail_triage_log) messages
+   * get the full classify-and-log treatment in one run, per inbox — defense
+   * in depth so a burst of new mail can never again single-handedly blow
+   * through the host's request timeout the way the uncapped, un-deduped
+   * scan did on 2026-08-31 (see the dedup comment in triageInbox). Anything
+   * past the cap stays \Unseen and unlogged, picked up next cycle. */
+  maxScanPerRun: number;
 };
 
 const QUARANTINE_MAILBOX_NAME = 'Quarantine';
 const DEFAULT_MAX_TRASH_PER_RUN = 20;
 const DEFAULT_MAX_QUARANTINE_PER_RUN = 50;
 const DEFAULT_QUARANTINE_DAYS = 14;
+const DEFAULT_MAX_SCAN_PER_RUN = 300;
 
 export function parseTriageConfig(env: Record<string, string | undefined>): TriageEnvConfig {
   const modeRaw = (env.MAIL_TRIAGE_MODE ?? 'off').trim().toLowerCase();
@@ -90,7 +98,11 @@ export function parseTriageConfig(env: Record<string, string | undefined>): Tria
           .filter(Boolean),
       )
     : null;
-  return { mode, maxTrashPerRun, maxQuarantinePerRun, quarantineDays, liveInboxIds };
+
+  const parsedMaxScan = Number(env.MAIL_TRIAGE_MAX_SCAN_PER_RUN ?? DEFAULT_MAX_SCAN_PER_RUN);
+  const maxScanPerRun = Number.isFinite(parsedMaxScan) && parsedMaxScan > 0 ? Math.floor(parsedMaxScan) : DEFAULT_MAX_SCAN_PER_RUN;
+
+  return { mode, maxTrashPerRun, maxQuarantinePerRun, quarantineDays, liveInboxIds, maxScanPerRun };
 }
 
 /** Off by default, same as every other new agent capability in this repo —
@@ -201,6 +213,14 @@ export type TriageInboxResult = {
   /** Same idea for Quarantine: set only if creating/finding the folder
    * itself failed (a real IMAP error), not merely "didn't need it yet". */
   quarantineUnavailable: boolean;
+  /** Total \Unseen messages found in the mailbox this run, before dedup —
+   * the raw backlog size, for visibility into how big it is regardless of
+   * how much of it is already-logged. */
+  unseenTotal: number;
+  /** Of unseenTotal, how many already had a mail_triage_log row from a
+   * previous run and were skipped without a full fetch — see the dedup
+   * comment in triageInbox for why this exists (2026-08-31 incident). */
+  alreadyLogged: number;
   error?: string;
   outcomes: TriageMessageOutcome[];
 };
@@ -327,6 +347,8 @@ export async function triageInbox(
     purged: 0,
     trashUnavailable: false,
     quarantineUnavailable: false,
+    unseenTotal: 0,
+    alreadyLogged: 0,
     outcomes: [],
   };
   if (triageCfg.mode === 'off') return result;
@@ -351,9 +373,52 @@ export async function triageInbox(
     try {
       const searchResult = await client.search({ seen: false }, { uid: true });
       const uids = searchResult === false ? [] : searchResult;
+      result.unseenTotal = uids.length;
+
+      // Cheap pre-pass, one bulk IMAP fetch for every candidate UID (not one
+      // round trip each): skip anything whose Message-ID this inbox has
+      // already logged a verdict for in a previous run, before paying for
+      // the full per-message fetchOne below. This is the fix for a real
+      // production incident (2026-08-31): dry_run mode correctly never
+      // marks a message \Seen (that would be a mailbox mutation dry_run
+      // explicitly promises never to make), so with nothing else tracking
+      // "already classified", every run was re-fetching and re-scoring the
+      // ENTIRE cumulative unseen backlog from scratch, forever — confirmed
+      // in production data as up to 18x re-classification of the same
+      // messages. That backlog only grows as new mail arrives, and it grew
+      // for three straight days until adding two more inboxes finally
+      // pushed one run's total scan time past the host's ~5-minute proxy
+      // timeout — every 30-minute cron cycle then failed outright (502) on
+      // ALL THREE inboxes, not just the new ones, because triageAllInboxes
+      // runs them concurrently and the whole request dies together. Keying
+      // the skip on mail_triage_log (message_id), not the mailbox's own
+      // \Seen flag, fixes the real cause without touching the mailbox at
+      // all — each run's cost is now proportional to mail that arrived
+      // since the last run, not the whole history.
+      const newUids: number[] = [];
+      if (uids.length > 0) {
+        for await (const envMsg of client.fetch(uids, { uid: true, envelope: true }, { uid: true })) {
+          const candidateMessageId = envMsg.envelope?.messageId ?? null;
+          // No Message-ID at all: can't dedupe honestly, so always
+          // (re)process — matches the pre-fix behavior for this rare case.
+          if (!candidateMessageId || !getDb().mailTriageLog.byMessageId(candidateMessageId)) {
+            newUids.push(envMsg.uid);
+          } else {
+            result.alreadyLogged++;
+          }
+        }
+      }
+
+      // Defense in depth: even genuinely-new mail is capped per run so a
+      // burst (a busy day, or the first run right after this fix ships,
+      // when the backlog is still catching up) can never again
+      // single-handedly blow through the host's timeout. Anything past the
+      // cap stays \Unseen and unlogged — picked up on the next cycle.
+      const uidsToClassify = newUids.slice(0, triageCfg.maxScanPerRun);
+
       let trashMoves = 0;
       let quarantineMoves = 0;
-      for (const uid of uids) {
+      for (const uid of uidsToClassify) {
         const msg = await client.fetchOne(
           uid,
           { envelope: true, flags: true, bodyStructure: true, headers: ['list-unsubscribe', 'x-spam-flag'] },
