@@ -76,6 +76,14 @@ const CLIENT_KEYWORDS = [
   'change order',
   'punch list',
   'proposal',
+  // EPA RRP (lead-paint renovator) certification — a real, recurring
+  // compliance requirement for a renovation contractor. Found 2026-08-31:
+  // these reminders/updates route through shared Constant Contact sending
+  // pools (e.g. shared1.ccsend.com) used by countless unrelated senders, so
+  // a domain-trust entry would be far too broad — a subject-keyword match is
+  // the narrow, deterministic way to catch this specific content instead.
+  'rrp certification',
+  'epa rrp',
 ];
 
 /** High-precision scam phrasing — deliberately narrow. A missed scam stays
@@ -117,6 +125,12 @@ const SCAM_KEYWORDS = [
  *     invites CC info@ariseaboveconstruction.com but who has no funnel/CRM
  *     record of her own (she's a program contact, not a sales lead), so the
  *     existing known-contact check alone can never catch her
+ *   - roofr.com — real roofing-estimation software Sean uses; its "your
+ *     password has been changed" security alert is exactly the kind of
+ *     notice that should never silently age out (confirmed by Sean 2026-08-31)
+ *   - adobesign.com — real e-signature platform Sean uses for contracts and
+ *     warranties (e.g. a Greenlawn Cabinet Warranty awaiting signature);
+ *     confirmed by Sean 2026-08-31
  * A domain match wins outright, same as every other fast-path exclusion —
  * checked before scoring, never itself scored. */
 const TRUSTED_SENDER_DOMAINS = [
@@ -126,6 +140,8 @@ const TRUSTED_SENDER_DOMAINS = [
   'intuit.com',
   'legalshieldproviders.com',
   'qtbizsolutions.com',
+  'roofr.com',
+  'adobesign.com',
 ];
 
 export function isTrustedDomain(fromAddress: string): boolean {

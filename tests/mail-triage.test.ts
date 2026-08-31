@@ -141,6 +141,51 @@ describe('classifyForTriage — fast-path safety always wins, bypasses scoring e
     });
     expect(result.verdict).toBe('protected');
   });
+
+  // Found from a full census of every domain that has ever landed in
+  // quarantine (2026-08-31), reviewed with Sean in one pass rather than
+  // trickling in one more fix at a time.
+  test('Roofr (real roofing-estimation software) security alerts are protected', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'noreply@roofr.com',
+      hasListUnsubscribe: true,
+      subject: 'Your Roofr password has been changed',
+    });
+    expect(result.verdict).toBe('protected');
+    expect(result.reason).toMatch(/trusted/);
+  });
+
+  test('Adobe Sign (real e-signature platform) document reminders are protected', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'echosign@adobesign.com',
+      hasListUnsubscribe: true,
+      subject: 'Reminder: Waiting for you to sign Greenlawn Cabinet Warranty',
+    });
+    expect(result.verdict).toBe('protected');
+  });
+
+  test('EPA RRP certification mail is protected by subject keyword, even from a shared ESP domain', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'noreply@shared1.ccsend.com',
+      hasListUnsubscribe: true,
+      subject: 'Is It Time For You to Re-new Your RRP Certification?',
+    });
+    expect(result.verdict).toBe('protected');
+    expect(result.reason).toMatch(/rrp certification/);
+  });
+
+  test('a different sender on the same shared ESP domain, with unrelated content, is NOT protected by that keyword alone', () => {
+    const result = classifyForTriage({
+      ...base,
+      fromAddress: 'marketing@shared1.ccsend.com',
+      hasListUnsubscribe: true,
+      subject: 'Big Spring Sale — 20% Off Everything',
+    });
+    expect(result.verdict).toBe('quarantine');
+  });
 });
 
 describe('isTrustedDomain', () => {
@@ -152,6 +197,8 @@ describe('isTrustedDomain', () => {
     expect(isTrustedDomain('do_not_reply@intuit.com')).toBe(true);
     expect(isTrustedDomain('noreply@legalshieldproviders.com')).toBe(true);
     expect(isTrustedDomain('briana.banks@qtbizsolutions.com')).toBe(true);
+    expect(isTrustedDomain('noreply@roofr.com')).toBe(true);
+    expect(isTrustedDomain('echosign@adobesign.com')).toBe(true);
   });
 
   test('does not match an unrelated domain, including a look-alike suffix', () => {
