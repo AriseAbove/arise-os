@@ -1479,11 +1479,67 @@ pre-wired to any one machine.
   every domain that ever shows up in quarantine would eventually swallow the
   bucket's entire purpose. Tests added to `tests/mail-triage.test.ts` for
   all three new domains plus `isTrustedDomain` coverage. 1387 tests passing,
-  `tsc --noEmit` clean. **Still needs:** this branch has not been merged
+  `tsc --noEmit` clean. **Update 2026-08-31:** merged (PR #8) and live —
+  Railway redeployed automatically. `MAIL_TRIAGE_MODE` still `dry_run`.
+- **Full census of every quarantine/trash domain, ever — not just the top
+  senders by volume (2026-08-31).** After two rounds of finding false
+  positives by sampling the highest-volume senders, Sean asked why every
+  check kept finding something new and whether everything could just be
+  fixed now instead of trickling in one fix at a time. Fair question, and
+  the honest answer was that the first two rounds were sampling (top ~25
+  domains by volume each time), not a complete review — a domain sending 18
+  messages a quarter wouldn't surface by volume alone even if it mattered
+  just as much as one sending 2,000. Fixed the actual process, not just the
+  data: pulled every distinct sender domain that has EVER landed in
+  `quarantine` (130 domains, 23,262 messages) or `trash` (1 domain, 90
+  messages, all confirmed genuine Best Buy gift-card phishing — that bucket
+  has never had a false positive) across the full history in the backup, not
+  a volume-sorted sample, and reviewed all 130 with Sean in one pass via
+  targeted questions rather than guessing. Two more real fixes came out of
+  it: **Roofr** (real roofing-estimation software Sean uses — a "password
+  changed" security alert was being quarantined, same risk class as the
+  Intuit alerts from the first fix) and **Adobe Sign** (real e-signature
+  platform — a signature reminder for a Greenlawn Cabinet Warranty was
+  sitting in quarantine) both added to `TRUSTED_SENDER_DOMAINS`. A third —
+  EPA RRP (lead-paint renovator) certification reminders, a real recurring
+  compliance requirement for a renovation contractor — could NOT be fixed as
+  a domain-trust entry: the mail routes through a shared Constant Contact
+  sending pool (`shared1.ccsend.com`) used by unrelated senders, so trusting
+  that domain would have opened the door to arbitrary marketing from anyone
+  else using the same pool. Added `'rrp certification'`/`'epa rrp'` to the
+  existing `CLIENT_KEYWORDS` subject-match list instead — same mechanism
+  already used for `203k`/`permit`/`estimate`, narrow and deterministic, and
+  confirmed NOT to catch an unrelated subject line from the same shared
+  domain (regression test covers exactly this). Two items surfaced but
+  deliberately left alone after Sean's review: `securedirectcapitalsource.com`
+  ("Funding for Arise Above Construction") and `patricklarcher.com`, both
+  more likely solicitation/scam than real correspondence — correctly
+  quarantined, not touched.
+  **On "why does this keep happening" and "can we just fix everything
+  now":** two separate points worth being direct about. First, this was a
+  process gap, not a bottomless one — sampling by volume missed the long
+  tail; a full census (done above) doesn't have that blind spot, and there
+  is no larger population of domains left to discover beyond it. Second,
+  and more importantly: `MAIL_TRIAGE_MODE` has been `dry_run` this entire
+  time, on every round of this — dry-run only classifies and logs, it has
+  never moved or deleted a single real message. Every "false positive"
+  found across all three rounds was a correct prediction of what WOULD
+  happen if triage went live, not something that actually happened to real
+  mail. There has been no live risk at any point.
+  **On "run a smoke test instead":** a smoke test (does the app boot, do
+  routes respond) would not have caught any of this — every issue found in
+  all three rounds was a data-classification correctness question, not a
+  crash. `npm test`/`tsc --noEmit` have been green through every round.
+  What actually catches this class of bug is exactly the real-production-
+  data review done here, not a build-health check.
+  1391 tests passing, `tsc --noEmit` clean (`tests/mail-triage.test.ts`
+  covers Roofr, Adobe Sign, the RRP keyword match, and the negative case —
+  a different sender on the same shared ESP domain with unrelated content
+  stays in quarantine). **Still needs:** this branch has not been merged
   (same no-push-access handoff as every fix in this log) — go live on
-  `MAIL_TRIAGE_MODE` stays Sean's separate, explicit decision, and another
-  clean dry-run pass with this second fix in place is the recommended next
-  check before that conversation.
+  `MAIL_TRIAGE_MODE` remains Sean's separate, explicit decision. With the
+  full census done, the recommended next step is a clean dry-run pass with
+  all three rounds of fixes in place, then that go-live conversation.
 
 ## Views
 
