@@ -25,9 +25,10 @@ type FakeMessage = {
 /** Minimal stand-in for ImapFlow covering exactly the surface triageInbox
  * calls: connect, getMailboxLock, list/mailboxCreate (Trash + Quarantine
  * discovery), search (both the unseen-inbox scan and the purge sweep's
- * Message-ID lookup), fetchOne, messageMove, logout. Every move is recorded
- * on `moves` (with destination) so tests can assert exactly what happened
- * without a real server. */
+ * Message-ID lookup), fetch (the bulk envelope pre-fetch added for the
+ * 2026-08-31 dedup fix), fetchOne, messageMove, logout. Every move is
+ * recorded on `moves` (with destination) so tests can assert exactly what
+ * happened without a real server. */
 function makeFakeImapFlow(opts: {
   inboxMessages: FakeMessage[];
   quarantineMessages?: FakeMessage[];
@@ -58,6 +59,13 @@ function makeFakeImapFlow(opts: {
     }
     async fetchOne(uid: number) {
       return opts.inboxMessages.find((m) => m.uid === uid) ?? null;
+    }
+    // eslint-disable-next-line require-yield -- generator shape is required by the caller even when inboxMessages is empty
+    async *fetch(uids: number[], _query: any, _options?: any) {
+      for (const uid of uids) {
+        const found = opts.inboxMessages.find((m) => m.uid === uid);
+        if (found) yield { uid: found.uid, envelope: found.envelope };
+      }
     }
     async messageMove(uid: number, to: string) {
       if (opts.moveShouldFail?.(uid)) throw new Error('move failed');
@@ -145,6 +153,7 @@ describe('triageInbox', () => {
     maxQuarantinePerRun: 50,
     quarantineDays: 14,
     liveInboxIds: null,
+    maxScanPerRun: 300,
     ...overrides,
   });
 
@@ -166,6 +175,47 @@ describe('triageInbox', () => {
     expect(moves).toHaveLength(0);
     expect(result.outcomes.find((o) => o.uid === 1)?.verdict).toBe('quarantine');
     expect(result.outcomes.find((o) => o.uid === 1)?.moved).toBe(false);
+  });
+
+  test('a message already logged by Message-ID from a previous run is skipped, not re-classified — the 2026-08-31 incident fix', async () => {
+    getDb().mailTriageLog.insert({
+      id: 'row-prev',
+      inboxId: 'inbox-1',
+      inboxName: 'AAC',
+      uid: 999, // a stale UID from the earlier run — dedup must key on Message-ID, not this
+      fromAddress: 'bulk@example.com',
+      subject: 'Already seen',
+      verdict: 'quarantine',
+      confidence: 75,
+      reason: 'bulk sender',
+      moved: false,
+      mode: 'dry_run',
+      messageId: '<dup@example.com>',
+      purgedAt: null,
+      createdAt: new Date().toISOString(),
+    });
+    const { Ctor } = makeFakeImapFlow({
+      inboxMessages: [
+        msg(1, { headers: Buffer.from('list-unsubscribe: <x>'), envelope: { from: [{ address: 'bulk@example.com' }], subject: 'Already seen', inReplyTo: null, messageId: '<dup@example.com>' } }),
+        msg(2), // no Message-ID at all — must still be processed, dedup can't apply
+      ],
+    });
+    const result = await triageInbox(config, cfg({ mode: 'dry_run' }), new Set(), Ctor);
+    expect(result.unseenTotal).toBe(2);
+    expect(result.alreadyLogged).toBe(1);
+    expect(result.scanned).toBe(1);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].uid).toBe(2);
+  });
+
+  test('maxScanPerRun caps how many genuinely-new messages get classified in one run, leaving the rest for next cycle', async () => {
+    const messages = [1, 2, 3].map((n) => msg(n));
+    const { Ctor } = makeFakeImapFlow({ inboxMessages: messages });
+    const result = await triageInbox(config, cfg({ mode: 'dry_run', maxScanPerRun: 2 }), new Set(), Ctor);
+    expect(result.unseenTotal).toBe(3);
+    expect(result.alreadyLogged).toBe(0);
+    expect(result.scanned).toBe(2);
+    expect(result.outcomes).toHaveLength(2);
   });
 
   test('live mode moves >=95% confidence mail straight to Trash', async () => {
