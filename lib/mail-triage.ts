@@ -92,11 +92,10 @@ const SCAM_KEYWORDS = [
   'verify your account immediately',
 ];
 
-/** Domains that must never be junk-scored, found from a real day of
- * dry-run data (2026-08-29): the BULK_UNSUBSCRIBE_CONFIDENCE signal alone
- * ("has a List-Unsubscribe header, sender isn't a known CRM contact") was
- * quarantining genuinely important mail from these three sources, none of
- * which is ever junk:
+/** Domains that must never be junk-scored, found from real production dry-run
+ * data: the BULK_UNSUBSCRIBE_CONFIDENCE signal alone ("has a List-Unsubscribe
+ * header, sender isn't a known CRM contact") was quarantining genuinely
+ * important mail from these sources, none of which is ever junk:
  *   - the business's own domain — its WordPress site's contact-form and
  *     job-application notifications (info@/wordpress@/recruiter@) route
  *     through here and include real leads and document reminders (a client
@@ -105,9 +104,29 @@ const SCAM_KEYWORDS = [
  *   - Allo, the AI receptionist — its missed-call and call-answered alerts
  *     ARE the lead pipeline; one day of dry-run data caught 124 of these
  *   - healthchecks.io — this app's own uptime monitoring for AAC's infra
+ *   - intuit.com — the identity/security stream for the QuickBooks account
+ *     this business's books run through (found 2026-08-30/31: "New Device
+ *     Log In," "A passkey was added to your Intuit Account," and "Your
+ *     Intuit subscription was canceled" were all landing in quarantine,
+ *     silent-safety-net-only, no auto-purge exception for a security alert)
+ *   - legalshieldproviders.com — an active legal-service relationship
+ *     ("Prepare for your call," "You've missed a call," a numbered service
+ *     request thread), not marketing
+ *   - qtbizsolutions.com — a real business-development contact (Briana
+ *     Banks, BuildStrong Detroit Business Plan Process) whose calendar
+ *     invites CC info@ariseaboveconstruction.com but who has no funnel/CRM
+ *     record of her own (she's a program contact, not a sales lead), so the
+ *     existing known-contact check alone can never catch her
  * A domain match wins outright, same as every other fast-path exclusion —
  * checked before scoring, never itself scored. */
-const TRUSTED_SENDER_DOMAINS = ['ariseaboveconstruction.com', 'withallo.com', 'healthchecks.io'];
+const TRUSTED_SENDER_DOMAINS = [
+  'ariseaboveconstruction.com',
+  'withallo.com',
+  'healthchecks.io',
+  'intuit.com',
+  'legalshieldproviders.com',
+  'qtbizsolutions.com',
+];
 
 export function isTrustedDomain(fromAddress: string): boolean {
   const at = fromAddress.lastIndexOf('@');
