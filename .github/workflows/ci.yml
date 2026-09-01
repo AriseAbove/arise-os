@@ -1,0 +1,49 @@
+name: CI
+
+# Runs the test suite and type-checker on every push and pull request. This is
+# the safety net the cron/deploy workflows don't provide: nothing here talks
+# to Railway or any live service, it just proves the code is sound before it's
+# allowed to reach production.
+#
+# Paired with Railway's "Wait for CI" setting (Settings → Deploy, arise-os
+# service) — once that's turned on, Railway won't deploy a push to
+# rebuild/arise-above until this workflow reports success here. Until it's
+# turned on, this still runs and reports pass/fail on every PR, but a deploy
+# can go out in parallel with a failing check — flip that switch to close the
+# gap for real.
+#
+# Root cause this exists to prevent: two real production incidents (the
+# mail_triage_log migration-ordering bug, and the mail-triage rescan/timeout
+# outage — see CLAUDE.md changelog) reached production because nothing
+# automated verified a change before it deployed. Both were only caught after
+# the fact, from Railway logs and a production backup. The test suite that
+# would have caught them already existed (vitest, 1400+ tests) — it just
+# never ran anywhere but a developer's own machine before merge.
+
+on:
+  push:
+    branches:
+      - rebuild/arise-above
+  pull_request:
+    branches:
+      - rebuild/arise-above
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
