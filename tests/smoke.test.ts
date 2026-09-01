@@ -25,18 +25,18 @@ const PAGES: PageEntry[] = [
   { file: 'page.tsx', load: () => import('@/app/page') },
   { file: 'comms/page.tsx', load: () => import('@/app/comms/page') },
   { file: 'social/page.tsx', load: () => import('@/app/social/page') },
-  { file: 'social/[platform]/page.tsx', load: () => import('@/app/social/[platform]/page'), props: { params: { platform: 'instagram' } } },
+  { file: 'social/[platform]/page.tsx', load: () => import('@/app/social/[platform]/page'), props: { params: Promise.resolve({ platform: 'instagram' }) } },
   { file: 'content/page.tsx', load: () => import('@/app/content/page') },
   { file: 'agents/page.tsx', load: () => import('@/app/agents/page') },
   { file: 'sops/page.tsx', load: () => import('@/app/sops/page') },
   { file: 'tasks/page.tsx', load: () => import('@/app/tasks/page') },
   { file: 'skills/page.tsx', load: () => import('@/app/skills/page') },
-  { file: 'org/page.tsx', load: () => import('@/app/org/page'), props: { searchParams: {} } },
+  { file: 'org/page.tsx', load: () => import('@/app/org/page'), props: { searchParams: Promise.resolve({}) } },
   { file: 'brain/page.tsx', load: () => import('@/app/brain/page') },
   { file: 'aac-brain/page.tsx', load: () => import('@/app/aac-brain/page') },
-  { file: 'finances/page.tsx', load: () => import('@/app/finances/page'), props: { searchParams: {} } },
-  { file: 'funnel/page.tsx', load: () => import('@/app/funnel/page'), props: { searchParams: {} } },
-  { file: 'workflows/page.tsx', load: () => import('@/app/workflows/page'), props: { searchParams: {} } },
+  { file: 'finances/page.tsx', load: () => import('@/app/finances/page'), props: { searchParams: Promise.resolve({}) } },
+  { file: 'funnel/page.tsx', load: () => import('@/app/funnel/page'), props: { searchParams: Promise.resolve({}) } },
+  { file: 'workflows/page.tsx', load: () => import('@/app/workflows/page'), props: { searchParams: Promise.resolve({}) } },
   { file: 'integrations/page.tsx', load: () => import('@/app/integrations/page') },
   { file: 'roadmap/page.tsx', load: () => import('@/app/roadmap/page') },
   { file: 'analytics/page.tsx', load: () => import('@/app/analytics/page') },
@@ -47,7 +47,7 @@ const PAGES: PageEntry[] = [
   {
     file: 'track/[token]/page.tsx',
     load: () => import('@/app/track/[token]/page'),
-    props: { params: { token: 'not-a-real-token' } },
+    props: { params: Promise.resolve({ token: 'not-a-real-token' }) },
   },
 ];
 
@@ -87,13 +87,13 @@ describe('/funnel renders under the Apps business lens without throwing', () => 
   // or ?stage= from AAC is still in the URL.
   test('business=apps, default layout', async () => {
     const { default: FunnelPage } = await import('@/app/funnel/page');
-    await expect(Promise.resolve(FunnelPage({ searchParams: { business: 'apps' } }))).resolves.toBeTruthy();
+    await expect(Promise.resolve(FunnelPage({ searchParams: Promise.resolve({ business: 'apps' }) }))).resolves.toBeTruthy();
   }, 20_000);
 
   test('business=apps with ?layout=radial still renders (forced back to flow, not a crash)', async () => {
     const { default: FunnelPage } = await import('@/app/funnel/page');
     await expect(
-      Promise.resolve(FunnelPage({ searchParams: { business: 'apps', layout: 'radial' } })),
+      Promise.resolve(FunnelPage({ searchParams: Promise.resolve({ business: 'apps', layout: 'radial' }) })),
     ).resolves.toBeTruthy();
   }, 20_000);
 });

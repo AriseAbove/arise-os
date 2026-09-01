@@ -50,7 +50,7 @@ describe('/funnel defaults to the shared Topbar cookie when no ?business= param 
   test('reads the shared cookie via lib/business-filter(-server)', () => {
     expect(page).toMatch(/import\s*\{\s*resolveBusinessFilter\s*\}\s*from\s*'@\/lib\/business-filter'/);
     expect(page).toMatch(/import\s*\{\s*readBusinessFilterCookie\s*\}\s*from\s*'@\/lib\/business-filter-server'/);
-    expect(page).toMatch(/resolveBusinessFilter\(readBusinessFilterCookie\(\)\)/);
+    expect(page).toMatch(/resolveBusinessFilter\(await readBusinessFilterCookie\(\)\)/);
   });
 
   test('falls back to the cookie only when ?business= is absent, never overriding an explicit param', () => {

@@ -271,11 +271,12 @@ function JourneyTableRows({
   );
 }
 
-export default async function FunnelPage({
-  searchParams,
-}: {
-  searchParams?: { business?: string; view?: string; stage?: string; layout?: string; lead?: string };
-}) {
+export default async function FunnelPage(
+  props: {
+    searchParams?: Promise<{ business?: string; view?: string; stage?: string; layout?: string; lead?: string }>;
+  }
+) {
+  const searchParams = await props.searchParams;
   // The business tabs used to be their own disconnected toggle — no fallback
   // to the Topbar's cookie at all, so switching AAC/Apps/Combined while
   // already on /funnel with no ?business= param did nothing. Fixed:
@@ -286,7 +287,7 @@ export default async function FunnelPage({
   // /org already reads).
   const businessParam = searchParams?.business;
   const parsedBusiness = FunnelBusinessSchema.safeParse(businessParam);
-  const cookieFilter = resolveBusinessFilter(readBusinessFilterCookie());
+  const cookieFilter = resolveBusinessFilter(await readBusinessFilterCookie());
   const business = parsedBusiness.success
     ? parsedBusiness.data
     : businessParam === undefined && cookieFilter !== 'all'

@@ -1703,6 +1703,49 @@ pre-wired to any one machine.
   regenerated `arise-console-deploy` himself — new 90-day expiration.
   `founderos-demo-cloud-agent` (Sep 11) has not been addressed and is worth
   the same treatment before it lapses.
+- **Next.js 14 → 15 upgrade (2026-09-01).** Direct follow-through on the CI
+  workflow entry above: `npm audit` during that work surfaced 6 high-severity
+  CVEs in `next` itself (DoS / HTTP-request-smuggling class, installed
+  `14.2.35`, fixed only in `15.0.8+`) that hadn't been surfaced to Sean —
+  scoped as its own task, then executed once he said go. Bumped `next` to
+  `^15.5.25` (React stayed on 18.3.1 — Next 15 supports React 18.2+, no need
+  to touch it). Ran the official `@next/codemod next-async-request-api`
+  migration for the breaking change this major version turns on: `cookies()`,
+  `headers()`, route `params`, and `searchParams` all became `Promise`-based
+  instead of synchronous. Codemod touched 15 files (not the ~26 an initial
+  grep suggested — most of the grep hits were `searchParams` read off a
+  manually-constructed `URL` object, which was never affected). One codemod
+  output was corrected by hand rather than accepted as-is:
+  `lib/business-filter-server.ts` had been auto-migrated to the deprecated
+  `UnsafeUnwrappedCookies` sync escape hatch — all 5 call sites were already
+  inside `async` page components, so it was switched to a real
+  `await cookies()` instead of leaving the deprecated shim in a file that
+  feeds the business-filter cookie every page reads. Also fixed by hand:
+  `next.config.mjs`'s `experimental.serverComponentsExternalPackages` flag,
+  stabilized in v15 to a top-level `serverExternalPackages` key (the codemod
+  doesn't touch `next.config`). `middleware.ts` — the Basic Auth gate in
+  front of ~40 API routes — uses none of the affected APIs and needed no
+  code change; its own `tests/middleware.test.ts` passing under the upgrade
+  is the verification that Next 15 didn't change its behavior.
+  Verified against a clean `npm ci` install: typecheck clean, all 1407 tests
+  passing across 143 files (2 pre-existing tests were source-regex
+  assertions pinned to the old synchronous call-site text —
+  `tests/funnel-page.test.ts` and `tests/track-page.test.ts` — updated to
+  match the new, equally-correct `await` form, not weakened). Post-upgrade
+  `npm audit`: the 6 high-severity Next CVEs are gone. One moderate `next`
+  advisory remains, transitive via bundled `postcss`, with no fix short of
+  Next 16 — separate, lower-priority, not addressed here. `mailparser` also
+  carries a pre-existing high-severity advisory, unrelated to this upgrade —
+  flagged, not touched. **Could not verify:** a full `npm run build` inside
+  this sandbox — `next/font/google` fetches `JetBrains Mono` from
+  fonts.googleapis.com at build time (same call this app has always made,
+  not new to v15), and this sandbox's network egress blocks that host. This
+  isn't a new gap: `ci.yml` doesn't run `next build` either (only typecheck +
+  test), so the build step's first real verification has always been
+  Railway's own build during deploy — same as before this change. **Still
+  needs:** merge (same no-push-access handoff as every fix in this log), and
+  watching the first real Railway build/deploy after merge to confirm it
+  succeeds where this sandbox couldn't check.
 
 ## Views
 

@@ -10,7 +10,8 @@ export const dynamic = 'force-dynamic';
  * components/MilestoneControl.tsx so it can show what's already done
  * instead of only ever offering a blank "mark complete" control.
  */
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(_req: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const completed = getDb().projectMilestones.forContact(params.id);
   return NextResponse.json({ ok: true, completed });
 }
@@ -22,7 +23,8 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
  * "mark complete" control on /funnel (components/MilestoneControl.tsx),
  * never automatic.
  */
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let body: unknown;
   try {
     body = await req.json();

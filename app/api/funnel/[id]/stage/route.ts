@@ -11,7 +11,8 @@ export const dynamic = 'force-dynamic';
  * change a journey's `status` (see lib/funnel-stage.ts) — always an explicit
  * click from the "move to stage" control on /funnel, never automatic.
  */
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   let body: unknown;
   try {
     body = await req.json();

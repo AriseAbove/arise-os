@@ -10,7 +10,8 @@ import { readBusinessFilterCookie } from '@/lib/business-filter-server';
 
 export const dynamic = 'force-dynamic';
 
-export default function WorkflowsPage({ searchParams }: { searchParams?: { business?: string } }) {
+export default async function WorkflowsPage(props: { searchParams?: Promise<{ business?: string }> }) {
+  const searchParams = await props.searchParams;
   // The business lens (same mechanism as /org and /funnel): a `?business=`
   // link overrides the global cookie for direct linking; otherwise the
   // Topbar's current selection applies. A workflow tagged 'shared' always
@@ -20,7 +21,7 @@ export default function WorkflowsPage({ searchParams }: { searchParams?: { busin
   const businessParam = searchParams?.business;
   const filter: BusinessFilter = isBusinessFilter(businessParam)
     ? businessParam
-    : resolveBusinessFilter(readBusinessFilterCookie());
+    : resolveBusinessFilter(await readBusinessFilterCookie());
   const allWorkflows = getDb().workflows.all();
   const workflows = workflowsForBusiness(allWorkflows, filter);
   // Render the company logos here, server-side: BrandLogo pulls simple-icons,

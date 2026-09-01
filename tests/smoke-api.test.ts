@@ -12,7 +12,7 @@ type RouteEntry = {
   route: string; // path under app/api, source of truth for coverage
   load: () => Promise<{ GET?: (req: Request, ctx?: any) => unknown }>;
   url: string; // includes any required query params
-  params?: Record<string, string>; // for dynamic [param] routes
+  params?: Promise<Record<string, string>>; // for dynamic [param] routes
 };
 
 // Every app/api/**/route.ts that exports GET, with valid params so each returns
@@ -32,14 +32,14 @@ const ROUTES: RouteEntry[] = [
   { route: 'contacts/tags', load: () => import('@/app/api/contacts/tags/route'), url: 'http://localhost/api/contacts/tags' },
   { route: 'departments', load: () => import('@/app/api/departments/route'), url: 'http://localhost/api/departments' },
   { route: 'funnel', load: () => import('@/app/api/funnel/route'), url: 'http://localhost/api/funnel' },
-  { route: 'funnel/[id]/milestone', load: () => import('@/app/api/funnel/[id]/milestone/route'), url: 'http://localhost/api/funnel/smoke-test-id/milestone', params: { id: 'smoke-test-id' } },
+  { route: 'funnel/[id]/milestone', load: () => import('@/app/api/funnel/[id]/milestone/route'), url: 'http://localhost/api/funnel/smoke-test-id/milestone', params: Promise.resolve({ id: 'smoke-test-id' }) },
   { route: 'funnel/lead-message', load: () => import('@/app/api/funnel/lead-message/route'), url: 'http://localhost/api/funnel/lead-message?name=Smoke%20Test%20Lead' },
   { route: 'keys', load: () => import('@/app/api/keys/route'), url: 'http://localhost/api/keys' },
   { route: 'life/map', load: () => import('@/app/api/life/map/route'), url: 'http://localhost/api/life/map' },
   { route: 'metrics', load: () => import('@/app/api/metrics/route'), url: 'http://localhost/api/metrics' },
   { route: 'roadmap', load: () => import('@/app/api/roadmap/route'), url: 'http://localhost/api/roadmap' },
   { route: 'social', load: () => import('@/app/api/social/route'), url: 'http://localhost/api/social' },
-  { route: 'social/[platform]', load: () => import('@/app/api/social/[platform]/route'), url: 'http://localhost/api/social/instagram', params: { platform: 'instagram' } },
+  { route: 'social/[platform]', load: () => import('@/app/api/social/[platform]/route'), url: 'http://localhost/api/social/instagram', params: Promise.resolve({ platform: 'instagram' }) },
   { route: 'social/posts', load: () => import('@/app/api/social/posts/route'), url: 'http://localhost/api/social/posts' },
   { route: 'social/series', load: () => import('@/app/api/social/series/route'), url: 'http://localhost/api/social/series?metric=audience' },
   { route: 'tools', load: () => import('@/app/api/tools/route'), url: 'http://localhost/api/tools' },

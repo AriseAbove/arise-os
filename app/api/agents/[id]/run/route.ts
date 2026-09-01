@@ -5,7 +5,8 @@ import { realAgents } from '@/lib/agents/real';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(_req: Request, { params }: { params: { id: string } }) {
+export async function POST(_req: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const runtime = createRuntime(getDb(), realAgents);
   try {
     const run = await runtime.run(params.id);

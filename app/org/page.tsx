@@ -96,7 +96,8 @@ function SystemCard({ href, title, caption }: { href: string; title: string; cap
   );
 }
 
-export default async function OrgChartPage({ searchParams }: { searchParams?: { business?: string } }) {
+export default async function OrgChartPage(props: { searchParams?: Promise<{ business?: string }> }) {
+  const searchParams = await props.searchParams;
   const db = getDb();
   const departments = db.departments.all();
   // Honest, computed status — same rule Home, /agents, and /content already
@@ -116,7 +117,7 @@ export default async function OrgChartPage({ searchParams }: { searchParams?: { 
   // applies. 'all' (combined) = everything bright.
   const filter = isBusinessFilter(searchParams?.business)
     ? searchParams!.business!
-    : resolveBusinessFilter(readBusinessFilterCookie());
+    : resolveBusinessFilter(await readBusinessFilterCookie());
   const business = filter === 'all' ? null : getBusiness(filter);
   const businessSet = business ? businessAgentSet(business.id) : null;
   const dimFor = (id: string) => (businessSet ? !businessSet.has(id) : false);

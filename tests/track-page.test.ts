@@ -51,7 +51,7 @@ describe('app/layout.tsx skips dashboard chrome for /track', () => {
 
   test('branches on the forwarded x-pathname header before rendering Sidebar/Topbar', () => {
     expect(layout).toMatch(/isPublicTrackerPath\(pathname\)/);
-    expect(layout).toMatch(/headers\(\)\.get\('x-pathname'\)/);
+    expect(layout).toMatch(/\(await headers\(\)\)\.get\('x-pathname'\)/);
   });
 
   test('the public-tracker branch renders bare body with no Sidebar/Topbar/CommandPalette/ConductorPanel', () => {
