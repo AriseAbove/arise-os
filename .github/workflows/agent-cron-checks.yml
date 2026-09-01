@@ -22,24 +22,31 @@ name: Agent cron checks
 # already calls out. If this workflow ever looks "dead" in the Actions tab,
 # check that first before touching secrets.
 #
-# Cadence groups (all UTC; the /8am-6pm ET/ windows assume EDT — see
+# Cadence groups (all UTC; the ET windows assume EDT — see
 # chief-of-staff-check.yml's own note about adjusting for DST/hour changes):
 #
-#   every-30 (12-22 UTC = 8am-6pm ET, every 30 min): gmail-worker,
+#   every-30 (12-23,0-3 UTC = 8am-11:59pm ET, every 30 min): gmail-worker,
 #     calendar-worker, comms-agent — inbox/calendar state changes fast during
 #     the workday and these are cheap read-only checks (IMAP/CalDAV), so a
 #     tight interval costs little and keeps /comms' unread/upcoming numbers
-#     close to real-time.
+#     close to real-time. Extended from a 6pm ET cutoff on 2026-09-01 — Sean
+#     receives real business email well after close, up to ~11pm ET.
 #
-#   every-15 (12-22 UTC, every 15 min): allo-pulse, website-pulse — these
-#     file new inbound calls/form leads into the AAC pipeline. A stale lead
-#     sitting unimported is a real cost (slower follow-up, worse close rate),
-#     so lead intake gets the tightest interval of the roster.
+#   every-15 (12-23,0-3 UTC = 8am-11:59pm ET, every 15 min): allo-pulse,
+#     website-pulse — these file new inbound calls/form leads into the AAC
+#     pipeline. A stale lead sitting unimported is a real cost (slower
+#     follow-up, worse close rate), so lead intake gets the tightest interval
+#     of the roster. Extended alongside every-30 on 2026-09-01 for the same
+#     reason: evening calls/leads are just as real as evening email, and the
+#     wider window costs nothing extra (still cheap, read-only).
 #
-#   hourly (12-22 UTC): data-agent, conductor — pure DB/brain-provider reads
-#     with no external API and no side effects; hourly during business hours
-#     is a cheap, steady "is the roster actually alive" heartbeat without
-#     being wasteful.
+#   hourly (12-22 UTC = 8am-6pm ET): data-agent, conductor — pure
+#     DB/brain-provider reads with no external API and no side effects;
+#     hourly during business hours is a cheap, steady "is the roster
+#     actually alive" heartbeat without being wasteful. Left at the original
+#     6pm ET cutoff — this is an internal liveness check, not a
+#     customer-facing signal, so there's no evening need for it yet. Say the
+#     word if you want this on the same 11pm window for consistency.
 #
 #   quickbooks-twice-daily (13,20 UTC = ~9am/~4pm ET): quickbooks-pulse — a
 #     financial snapshot (MTD income/expenses, open invoices) that doesn't
@@ -53,9 +60,9 @@ name: Agent cron checks
 
 on:
   schedule:
-    - cron: '*/30 12-22 * * *' # every-30
-    - cron: '*/15 12-22 * * *' # every-15
-    - cron: '0 12-22 * * *'    # hourly
+    - cron: '*/30 12-23,0-3 * * *' # every-30
+    - cron: '*/15 12-23,0-3 * * *' # every-15
+    - cron: '0 12-22 * * *'        # hourly
     - cron: '0 13,20 * * *'    # quickbooks-twice-daily
     - cron: '0 */4 * * *'      # every-4h
   workflow_dispatch:
@@ -67,7 +74,7 @@ on:
 
 jobs:
   every-30:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/30 12-22 * * *'
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/30 12-23,0-3 * * *'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -89,7 +96,7 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
   every-15:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 12-22 * * *'
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 12-23,0-3 * * *'
     runs-on: ubuntu-latest
     strategy:
       matrix:

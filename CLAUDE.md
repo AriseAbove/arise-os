@@ -1629,12 +1629,37 @@ pre-wired to any one machine.
   credit-pitch/Rocket Mortgage marketing email checked by hand, still
   quarantine unchanged. 1407 tests passing (12 new, covering both the
   rescued notices and the marketing that must stay caught), `tsc --noEmit`
-  clean. **Still needs:** this branch has not been merged yet (same
-  no-push-access handoff as every fix in this log). Even once merged, this
-  is still just the content-based ruleset — going live on either personal
-  inbox remains a separate decision, and a fresh dry-run pass with this
-  ruleset in place should run for a few days first so any further gaps
-  surface before real mail is ever moved.
+  clean. **Update 2026-09-01:** merged (PR #12, commit d7d4bcc) and live —
+  Railway redeployed automatically. This is still just the content-based
+  ruleset landing — going live on either personal inbox remains a separate
+  decision, and a fresh dry-run pass with this ruleset in place should run
+  for a few days first so any further gaps surface before real mail is ever
+  moved.
+- **Business-hours cron window extended to 11pm ET (2026-09-01).** Sean
+  said he still gets real business email well after close, up to around
+  11pm ET, but `agent-cron-checks.yml`'s `every-30` group (gmail-worker,
+  calendar-worker, comms-agent) stopped polling at 6pm ET (`12-22` UTC).
+  Extended `every-30` and `every-15` (allo-pulse, website-pulse — lead
+  intake, extended for the same reason: an evening call or web lead is just
+  as real as an evening email, and these are cheap read-only checks) to
+  `12-23,0-3` UTC, which is 8am-11:59pm ET — a standard cron hour range
+  can't wrap past midnight in one span, so the tail end (8pm-11:59pm ET)
+  has to be expressed as the separate `0-3` UTC sub-range. Left `hourly`
+  (data-agent, conductor — an internal liveness heartbeat, not a
+  customer-facing signal) at the original 6pm ET cutoff; say the word if
+  that should move too. Updated both the `on.schedule` cron string and each
+  job's matching `if: github.event.schedule == '...'` condition together —
+  this workflow's own job-level guard means a cron string changed without
+  its `if:` would silently stop that job from ever firing on schedule.
+  Verified the new window with `croniter` against a sample day: the
+  `every-30` schedule fires continuously from 8:00am to 11:30pm ET with no
+  gap, and produces no times outside that window. Config-only change (no
+  app code), so there's no `npm test`/`tsc` equivalent to run; the real
+  confirmation is a scheduled cron firing after the old 6pm ET cutoff.
+  **Still needs:** this branch has not been merged yet (same no-push-access
+  handoff as every fix in this log) — same reminder as always, the
+  DST-hardcoded-in-UTC caveat this file already flags means these exact UTC
+  values will need revisiting when DST ends in early November.
 
 ## Views
 
