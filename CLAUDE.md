@@ -1656,10 +1656,53 @@ pre-wired to any one machine.
   gap, and produces no times outside that window. Config-only change (no
   app code), so there's no `npm test`/`tsc` equivalent to run; the real
   confirmation is a scheduled cron firing after the old 6pm ET cutoff.
-  **Still needs:** this branch has not been merged yet (same no-push-access
-  handoff as every fix in this log) — same reminder as always, the
-  DST-hardcoded-in-UTC caveat this file already flags means these exact UTC
-  values will need revisiting when DST ends in early November.
+  **Update 2026-09-01:** merged (PR #13, commit df61792) and live — GitHub
+  Actions picks up `on.schedule` changes from the default branch directly, no
+  Railway redeploy needed. Same reminder as always: the DST-hardcoded-in-UTC
+  caveat this file already flags means these exact UTC values will need
+  revisiting when DST ends in early November.
+- **CI workflow added — tests now run automatically before code reaches
+  production (2026-09-01).** Sean asked for a "heart to heart" on why
+  arise-os looked unstable (Railway crash notifications, GitHub Actions
+  failures, an expiring GitHub token). Investigation found the app itself
+  wasn't actually unstable: all 13 recent GitHub Actions failures predated
+  the mail-triage outage fix (PR #11, 037065b) with zero since, and every
+  Railway "Deployment crashed" notification checked (going back 3 days)
+  turned out to be the same false positive — `next start` receiving a
+  routine SIGTERM when a new deploy replaces the old container, which npm's
+  wrapper logs as `npm error signal SIGTERM`, which Railway's crash-detector
+  reads as a real crash. The currently active deployment has run 3+ hours
+  clean with a single start event. But one real gap surfaced: this repo had
+  **no CI workflow at all** — every merge to `rebuild/arise-above` deployed
+  straight to production with no automated test gate, and Railway's own
+  "Wait for CI" setting (Settings → Deploy) was off. The two real past
+  incidents in this log (the `mail_triage_log` migration-ordering bug and
+  the mail-triage rescan/timeout outage) both reached production because
+  nothing automated verified the change first — the 1400+-test vitest suite
+  that would have caught them already existed, it just only ever ran on a
+  developer's own machine before merge, never in CI.
+  Added `.github/workflows/ci.yml`: runs `npm ci`, `npm run typecheck`
+  (`tsc --noEmit`), and `npm test` (vitest) on every push and pull request
+  against `rebuild/arise-above`. Verified end-to-end against a clean
+  `npm ci` install (not just the sandbox's existing `node_modules`): 1407
+  tests passing across 143 files, typecheck clean. **Still needs:** (1) this
+  branch has not been merged yet (same no-push-access handoff as every fix
+  in this log); (2) even once merged, Railway's "Wait for CI" toggle is a
+  separate manual step Sean has to flip himself (Settings → Deploy →
+  "Wait for CI") — until then this workflow reports pass/fail on every PR
+  but doesn't yet block a deploy from going out in parallel with a failing
+  check.
+- **GitHub token renewal (2026-09-01).** Investigation (same session as the
+  CI workflow above) found two fine-grained PATs tied to this project
+  nearing expiry: `arise-console-deploy` (was expiring Sep 5) and
+  `founderos-demo-cloud-agent` (expires Sep 11) — found via
+  github.com/settings/personal-access-tokens. Could not confirm
+  `arise-console-deploy`'s exact scope or what depends on it; GitHub's
+  sudo-mode password re-confirmation blocked viewing that without Sean's
+  password, which Claude does not enter on his behalf. **Update:** Sean
+  regenerated `arise-console-deploy` himself — new 90-day expiration.
+  `founderos-demo-cloud-agent` (Sep 11) has not been addressed and is worth
+  the same treatment before it lapses.
 
 ## Views
 
