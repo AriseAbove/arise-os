@@ -49,7 +49,7 @@ describe('/api/funnel/[id]/milestone', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ milestoneId }),
       }),
-      { params: { id } },
+      { params: Promise.resolve({ id }) },
     );
 
   test('marks a milestone complete', async () => {
@@ -65,7 +65,7 @@ describe('/api/funnel/[id]/milestone', () => {
   test('GET returns the completed milestones for a contact', async () => {
     seed('m-route-2');
     await post('m-route-2', 'demo');
-    const res = await GET(new Request('http://test/api/funnel/m-route-2/milestone'), { params: { id: 'm-route-2' } });
+    const res = await GET(new Request('http://test/api/funnel/m-route-2/milestone'), { params: Promise.resolve({ id: 'm-route-2' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.completed).toHaveLength(1);
@@ -97,7 +97,7 @@ describe('/api/funnel/[id]/milestone', () => {
         headers: { 'Content-Type': 'application/json' },
         body: 'not json',
       }),
-      { params: { id: 'm-route-5' } },
+      { params: Promise.resolve({ id: 'm-route-5' }) },
     );
     expect(res.status).toBe(400);
   });

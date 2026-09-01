@@ -9,7 +9,8 @@ import { FollowerBarChart } from '@/components/FollowerBarChart';
 
 export const dynamic = 'force-dynamic';
 
-export default function SocialPlatformPage({ params }: { params: { platform: string } }) {
+export default async function SocialPlatformPage(props: { params: Promise<{ platform: string }> }) {
+  const params = await props.params;
   const db = getDb();
   const detail = platformDetail(db, params.platform as SocialPlatform);
   if (!detail) notFound();

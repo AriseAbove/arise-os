@@ -34,7 +34,8 @@ function ago(unix: number): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-export default async function FinancesPage({ searchParams }: { searchParams?: { business?: string } }) {
+export default async function FinancesPage(props: { searchParams?: Promise<{ business?: string }> }) {
+  const searchParams = await props.searchParams;
   // The business lens (same mechanism /org and /funnel already read): a
   // `?business=` link overrides the global cookie for direct linking;
   // otherwise the Topbar's current AAC / Apps / Combined selection applies.
@@ -54,7 +55,7 @@ export default async function FinancesPage({ searchParams }: { searchParams?: { 
   // violate HONESTY).
   const businessFilter = isBusinessFilter(searchParams?.business)
     ? searchParams!.business!
-    : resolveBusinessFilter(readBusinessFilterCookie());
+    : resolveBusinessFilter(await readBusinessFilterCookie());
   const showAacBooks = businessFilter !== 'apps';
 
   // QuickBooks — AAC's real books. Client keys configured is not the same as

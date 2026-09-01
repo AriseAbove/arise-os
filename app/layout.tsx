@@ -74,8 +74,8 @@ function isPublicTrackerPath(pathname: string | null): boolean {
   return pathname !== null && pathname.startsWith('/track');
 }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const pathname = headers().get('x-pathname');
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const pathname = (await headers()).get('x-pathname');
   if (isPublicTrackerPath(pathname)) {
     return (
       <html lang="en" suppressHydrationWarning>
@@ -99,7 +99,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     );
   }
 
-  const businessFilter = resolveBusinessFilter(readBusinessFilterCookie());
+  const businessFilter = resolveBusinessFilter(await readBusinessFilterCookie());
   return (
     <html lang="en" className={fontMono.variable} suppressHydrationWarning>
       <head>

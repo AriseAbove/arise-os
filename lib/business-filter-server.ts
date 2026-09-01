@@ -12,9 +12,9 @@ import { BUSINESS_FILTER_COOKIE } from '@/lib/business-filter';
  * harness invoking a page component directly). Server components should
  * call this instead of `cookies()` directly.
  */
-export function readBusinessFilterCookie(): string | null {
+export async function readBusinessFilterCookie(): Promise<string | null> {
   try {
-    return cookies().get(BUSINESS_FILTER_COOKIE)?.value ?? null;
+    return (await cookies()).get(BUSINESS_FILTER_COOKIE)?.value ?? null;
   } catch {
     return null;
   }

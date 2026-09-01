@@ -59,7 +59,8 @@ function NotFound() {
   );
 }
 
-export default function TrackPage({ params }: { params: { token: string } }) {
+export default async function TrackPage(props: { params: Promise<{ token: string }> }) {
+  const params = await props.params;
   const contactId = verifyTrackToken(params.token);
   if (!contactId) return <NotFound />;
 

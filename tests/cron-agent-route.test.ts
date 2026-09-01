@@ -30,7 +30,7 @@ describe('/api/cron/[agentId]', () => {
         method: 'POST',
         headers: secret ? { authorization: `Bearer ${secret}` } : {},
       }),
-      { params: { agentId } },
+      { params: Promise.resolve({ agentId }) },
     );
 
   test('every real agent id in the roster is a valid target (nothing silently unscheduleable)', () => {

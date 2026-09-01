@@ -26,7 +26,8 @@ export const dynamic = 'force-dynamic';
 
 const REAL_AGENT_IDS = new Set(realAgents.map((a) => a.id));
 
-export async function POST(req: Request, { params }: { params: { agentId: string } }) {
+export async function POST(req: Request, props: { params: Promise<{ agentId: string }> }) {
+  const params = await props.params;
   const { agentId } = params;
   if (!REAL_AGENT_IDS.has(agentId)) {
     return NextResponse.json({ error: `unknown agent: ${agentId}` }, { status: 404 });

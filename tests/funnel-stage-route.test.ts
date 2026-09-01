@@ -49,7 +49,7 @@ describe('/api/funnel/[id]/stage', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stage }),
       }),
-      { params: { id } },
+      { params: Promise.resolve({ id }) },
     );
 
   test('moves a lead to a new stage', async () => {
@@ -86,7 +86,7 @@ describe('/api/funnel/[id]/stage', () => {
         headers: { 'Content-Type': 'application/json' },
         body: 'not json',
       }),
-      { params: { id: 'route-4' } },
+      { params: Promise.resolve({ id: 'route-4' }) },
     );
     expect(res.status).toBe(400);
   });
