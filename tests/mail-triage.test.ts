@@ -214,6 +214,148 @@ describe('classifyForTriage — fast-path safety always wins, bypasses scoring e
     expect(result.verdict).toBe('protected');
     expect(result.reason).toMatch(/trusted/);
   });
+
+  // Found 2026-09-01 from a full census of the two personal inboxes'
+  // quarantine history: financial institutions send both real account
+  // alerts and marketing from the same domain, so domain-trust can't tell
+  // them apart the way it does for the business inbox's own tools. These
+  // are real quarantined subjects from the census, verbatim.
+  describe('real financial account notices are protected by subject keyword, even from an untrusted domain', () => {
+    test('a Citi minimum-payment-due alert', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'info6@info6.citi.com',
+        hasListUnsubscribe: true,
+        subject: 'Upcoming Minimum Payment due alert',
+      });
+      expect(result.verdict).toBe('protected');
+      expect(result.reason).toMatch(/payment due/);
+    });
+
+    test('a Citizens Bank failed-payment notice', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'alerts@em.citizensbank.com',
+        hasListUnsubscribe: true,
+        subject: 'Uh-oh! We couldn’t process your payment.',
+      });
+      expect(result.verdict).toBe('protected');
+    });
+
+    test('a Home Depot commercial card payment-due notice', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'alerts@info8.accountonline.com',
+        hasListUnsubscribe: true,
+        subject: 'The Home Depot Commercial Revolving Charge Card Account Payment is Due',
+      });
+      expect(result.verdict).toBe('protected');
+    });
+
+    test('a "forgot a payment" notice', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'alerts@info8.accountonline.com',
+        hasListUnsubscribe: true,
+        subject: 'Whoops, You Forgot a Payment',
+      });
+      expect(result.verdict).toBe('protected');
+    });
+
+    test('an account-needs-attention notice', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'alerts@info8.accountonline.com',
+        hasListUnsubscribe: true,
+        subject: 'Your The Home Depot Commercial Revolving Charge Card Account Needs Attention',
+      });
+      expect(result.verdict).toBe('protected');
+    });
+
+    test('an Experian dispute-results notice', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'noreply@e.ncac.experian.com',
+        hasListUnsubscribe: true,
+        subject: 'Your Experian Dispute Results are Ready',
+      });
+      expect(result.verdict).toBe('protected');
+    });
+
+    test('a card statement notice', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'info17@info17.citi.com',
+        hasListUnsubscribe: true,
+        subject: 'Your My Best Buy® Visa® Card Statement',
+      });
+      expect(result.verdict).toBe('protected');
+    });
+
+    test('a payment confirmation and a payment-attempt notice', () => {
+      const confirmation = classifyForTriage({
+        ...base,
+        fromAddress: 'info17@info17.citi.com',
+        hasListUnsubscribe: true,
+        subject: 'Thank you for your payment!',
+      });
+      expect(confirmation.verdict).toBe('protected');
+
+      const attempt = classifyForTriage({
+        ...base,
+        fromAddress: 'info17@info17.citi.com',
+        hasListUnsubscribe: true,
+        subject: 'Your Recent Payment Attempt',
+      });
+      expect(attempt.verdict).toBe('protected');
+    });
+  });
+
+  // Same census, the other half of the finding: real marketing from the
+  // exact same financial-institution senders is NOT swept up by the new
+  // keywords — it still lands in Quarantine (not deleted, recoverable for
+  // 14 days), same as before this fix.
+  describe('marketing from the same financial-institution senders still quarantines, unchanged', () => {
+    test('an Amex Offers marketing email', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'noreply@member.americanexpress.com',
+        hasListUnsubscribe: true,
+        subject: 'Sean, don’t miss out! Redeem your Amex Offers',
+      });
+      expect(result.verdict).toBe('quarantine');
+    });
+
+    test('a debt-consolidation-loan pitch from Equifax', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'news@e.equifax.com',
+        hasListUnsubscribe: true,
+        subject: 'Congratulations! Sean, You’ve been selected to apply for a debt consolidation loan',
+      });
+      expect(result.verdict).toBe('quarantine');
+    });
+
+    test('a Rocket Mortgage rate-drop marketing email', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'news@e.rocketmortgage.com',
+        hasListUnsubscribe: true,
+        subject: 'Sean, rates just dropped. Calculate savings.',
+      });
+      expect(result.verdict).toBe('quarantine');
+    });
+
+    test('a Citi seasonal marketing email', () => {
+      const result = classifyForTriage({
+        ...base,
+        fromAddress: 'info15@info15.citi.com',
+        hasListUnsubscribe: true,
+        subject: '\u{1F338} Spotlight on spring.',
+      });
+      expect(result.verdict).toBe('quarantine');
+    });
+  });
 });
 
 describe('isTrustedDomain', () => {

@@ -86,6 +86,49 @@ const CLIENT_KEYWORDS = [
   'epa rrp',
 ];
 
+/** Subject-line phrases that mean "this is a real, time-sensitive financial
+ * account notice" — checked before junk scoring, same mechanism as
+ * CLIENT_KEYWORDS, but for the personal inboxes rather than the business.
+ *
+ * Found 2026-09-01 from a full census of seanadavis0@ and 1solutionsgroup1@'s
+ * quarantine history (same method as the business inbox's domain census):
+ * domain-trust alone can't be the answer for financial institutions, because
+ * the SAME domain sends both real account alerts and marketing from the same
+ * address (e.g. info6.citi.com sends "Upcoming Minimum Payment due alert"
+ * and info15.citi.com sends "🌸 Spotlight on spring." — trusting the domain
+ * would let the marketing through too; not trusting it risks burying a real
+ * payment problem in Quarantine for up to 14 days). Confirmed in the actual
+ * quarantined data: a Citi minimum-payment-due alert, a Citizens Bank "we
+ * couldn't process your payment" notice, two Home Depot commercial card
+ * payment-due/needs-attention notices, and an Experian dispute-results
+ * notice were all sitting in Quarantine next to Amex Offers, a debt-
+ * consolidation pitch, and a car-insurance upsell from the same senders.
+ * A subject-keyword match is the narrow, content-based way to pull the real
+ * notices out without also whitelisting the marketing.
+ *
+ * This is a "protected" fast-path, not a security control: it widens what
+ * counts as "leave it in the inbox," never anything a spam filter should be
+ * trusted for. A List-Unsubscribe header still puts an otherwise-unmatched
+ * message in Quarantine, not deleted — recoverable for 14 days either way.
+ * Phrases here are picked to be specific to a genuine account event (a due
+ * date, a failed charge, a statement, a dispute outcome), not vague framing
+ * like "action needed" that marketing uses just as often as a real notice
+ * does — those stay in the ambiguous-but-recoverable Quarantine bucket. */
+const FINANCIAL_ALERT_KEYWORDS = [
+  'payment due',
+  'payment is due',
+  'payment attempt',
+  "couldn't process your payment",
+  'could not process your payment',
+  'forgot a payment',
+  'account needs attention',
+  'dispute results',
+  'statement is ready',
+  'card statement',
+  'thank you for your payment',
+  'account is now open',
+];
+
 /** High-precision scam phrasing — deliberately narrow. A missed scam stays
  * in the inbox for a human to see (safe); a false match trashes a real
  * email (not safe) — so this list only holds phrases with very low
@@ -179,9 +222,20 @@ const SCAM_KEYWORD_CONFIDENCE = 96;
 const BULK_UNSUBSCRIBE_CONFIDENCE = 75;
 const NO_SIGNAL_CONFIDENCE = 0;
 
+/** Normalizes the typographic apostrophes/quotes real mail-template
+ * subjects almost always use (’ ‘ “ ”) to their plain ASCII equivalents.
+ * Without this, a keyword phrase like "couldn't process your payment"
+ * silently fails to match "Uh-oh! We couldn't process your payment." the
+ * moment the sender's template uses a curly apostrophe (’) instead of a
+ * straight one (') — found while adding FINANCIAL_ALERT_KEYWORDS, whose
+ * whole job is matching real financial-institution subject lines. */
+function normalizeQuotes(text: string): string {
+  return text.replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+}
+
 function findMatch(haystack: string, needles: readonly string[]): string | undefined {
-  const lower = haystack.toLowerCase();
-  return needles.find((needle) => lower.includes(needle));
+  const lower = normalizeQuotes(haystack.toLowerCase());
+  return needles.find((needle) => lower.includes(normalizeQuotes(needle)));
 }
 
 /** The deterministic score itself, isolated so it's independently testable
@@ -225,6 +279,14 @@ export function classifyForTriage(input: TriageInput): TriageVerdict {
       verdict: 'protected',
       confidence: 0,
       reason: `subject mentions "${clientKeyword}" — bypasses triage entirely`,
+    };
+  }
+  const financialAlertKeyword = findMatch(input.subject, FINANCIAL_ALERT_KEYWORDS);
+  if (financialAlertKeyword) {
+    return {
+      verdict: 'protected',
+      confidence: 0,
+      reason: `subject mentions "${financialAlertKeyword}" — a real account notice, bypasses triage entirely`,
     };
   }
 
