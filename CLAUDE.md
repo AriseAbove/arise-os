@@ -1589,10 +1589,52 @@ pre-wired to any one machine.
   new tests cover the dedup skip and the scan cap. 1395 tests passing,
   `tsc --noEmit` clean. Verified against the same production backup that
   surfaced the bug: the 19x ratio and the exact 00:08 UTC last-successful-
-  run timestamp are what this fix addresses. **Still needs:** this branch
-  has not been merged yet (same no-push-access handoff as every fix in this
-  log) — once merged, the next cron cycle should be checked to confirm it
-  actually completes rather than 502s again.
+  run timestamp are what this fix addresses. **Update 2026-09-01:** merged
+  (PR #11, commit 037065b) and live — Railway redeployed automatically.
+  Verification of the next real cron cycle is in progress (scheduled
+  self-check).
+- **Personal-inbox census: financial-institution content-based rules
+  (2026-09-01).** Sean asked to move toward actually cleaning up the two
+  personal inboxes; before recommending that, did for them what the
+  business inbox already got — a full census of everything that's ever
+  landed in their quarantine, not a volume sample. Found a real problem
+  domain-trust can't solve: financial institutions send both genuine account
+  alerts and marketing from the exact same sending domain, so trusting the
+  domain would let marketing through, and not trusting it risks burying a
+  real payment problem in Quarantine for up to 14 days. Confirmed concretely
+  in the data: a Citi minimum-payment-due alert, a Citizens Bank "we
+  couldn't process your payment" notice, two Home Depot commercial-card
+  payment-due/needs-attention notices, and an Experian dispute-results
+  notice were all sitting in Quarantine right next to Amex Offers, a debt-
+  consolidation pitch, and a car-insurance upsell from the same senders.
+  Nothing had actually happened — `MAIL_TRIAGE_MODE` has been `dry_run` this
+  entire time — but it's the clearest evidence yet for why these two inboxes
+  can't go live on the business inbox's domain-trust approach.
+  Fixed with a new `FINANCIAL_ALERT_KEYWORDS` subject-phrase list (same
+  fast-path-exclusion mechanism as `CLIENT_KEYWORDS`/the EPA RRP fix, applied
+  content-first instead of domain-first): phrases specific to a genuine
+  account event (a due date, a failed charge, a statement, a dispute
+  outcome) rather than vague framing like "action needed" that marketing
+  uses just as often as a real notice does — those two ambiguous cases
+  (Capital One "please review your income and employment info") were left
+  in Quarantine deliberately rather than guessed at; nothing there is ever
+  deleted, only released to Trash after 14 days. Also fixed `findMatch` to
+  normalize typographic apostrophes/quotes (’‘“”), which the Citizens Bank
+  test caught immediately — real mail templates almost never use a plain
+  ASCII apostrophe. Verified against the actual production backup by
+  reclassifying every distinct quarantined (sender, subject) combination
+  from both personal inboxes with the new rules: 18 of 568 flip to
+  protected — exactly the payment-due/failed/statement/dispute-result class
+  of message — and the other 550, including every Amex Offers/Equifax
+  credit-pitch/Rocket Mortgage marketing email checked by hand, still
+  quarantine unchanged. 1407 tests passing (12 new, covering both the
+  rescued notices and the marketing that must stay caught), `tsc --noEmit`
+  clean. **Still needs:** this branch has not been merged yet (same
+  no-push-access handoff as every fix in this log). Even once merged, this
+  is still just the content-based ruleset — going live on either personal
+  inbox remains a separate decision, and a fresh dry-run pass with this
+  ruleset in place should run for a few days first so any further gaps
+  surface before real mail is ever moved.
 
 ## Views
 
