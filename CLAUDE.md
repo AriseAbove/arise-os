@@ -1701,8 +1701,9 @@ pre-wired to any one machine.
   sudo-mode password re-confirmation blocked viewing that without Sean's
   password, which Claude does not enter on his behalf. **Update:** Sean
   regenerated `arise-console-deploy` himself — new 90-day expiration.
-  `founderos-demo-cloud-agent` (Sep 11) has not been addressed and is worth
-  the same treatment before it lapses.
+  **Update (2026-09-03):** Sean also regenerated `founderos-demo-cloud-agent`
+  himself — new expiration in November 2026. Both fine-grained PATs found in
+  this entry are now current; nothing outstanding here.
 - **Next.js 14 → 15 upgrade (2026-09-01).** Direct follow-through on the CI
   workflow entry above: `npm audit` during that work surfaced 6 high-severity
   CVEs in `next` itself (DoS / HTTP-request-smuggling class, installed
