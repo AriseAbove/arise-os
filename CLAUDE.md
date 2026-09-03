@@ -1747,6 +1747,37 @@ pre-wired to any one machine.
   needs:** merge (same no-push-access handoff as every fix in this log), and
   watching the first real Railway build/deploy after merge to confirm it
   succeeds where this sandbox couldn't check.
+- **Railway "Wait for CI" flipped on + account health check (2026-09-03).**
+  Sean asked for an actual status check on the mail-triage system, then
+  asked this to be handled directly rather than just reported. Live-checked
+  Railway itself (not just the repo): the CI-workflow entry above's "Still
+  needs: merge" note is now stale — PRs #14 (CI workflow) and #15 (Next.js
+  15 upgrade) are both already merged into `rebuild/arise-above`, confirmed
+  via `git log`. Turned on **Wait for CI** in arise-os's production service
+  settings (Settings -> Deploy) directly via the Railway dashboard (logged
+  into Chrome on Sean's Mac) — was off, applied, service redeployed clean
+  and shows Online. Checked whether Railway's GitHub App needed a
+  permissions re-accept first (the toggle's own UI warns about this): it
+  didn't — the only GitHub App with a pending "Permission updates
+  requested" badge is `coderabbitai`, unrelated to Railway and left
+  untouched. Also checked account health while in there: the "Trial has
+  expired" notification in Railway's bell icon is a stale 3-month-old alert
+  from before the account moved to a real paid **Hobby plan**
+  (usage-based, $1.56 of $5 included this cycle) — not a current problem.
+  One unrelated finding surfaced along the way, flagged but not touched:
+  the separate `content-transformation` Railway project's only service
+  shows **offline** — not investigated, out of scope for this pass.
+  Separately confirmed a real limitation of the desktop-bridge tools: the
+  isolated Linux VM behind `device_bash` can reach Sean's real `arise-os`
+  folder on disk (so a commit can be authored there) but has no access to
+  his actual GitHub credentials (no SSH key, no credential helper, no `gh`
+  login) — `git push` from that VM fails outright. The 2026-09-03
+  PAT-renewal commit above and this changelog entry are both sitting
+  committed on his Mac's real local clone, waiting on a `git push origin
+  rebuild/arise-above` Sean runs himself from his own Terminal (which
+  already has working credentials) — same one-command handoff as every
+  other unmerged fix in this log, just for a doc-only change this time so
+  there's no CI/deploy risk in delaying it.
 
 ## Views
 
